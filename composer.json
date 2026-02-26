@@ -11,19 +11,19 @@
 	],
 	"require": {
 		"php": "^8.3",
-		"illuminate/database": "^10.0 || ^11.0",
-		"illuminate/http": "^1.1",
-		"illuminate/pagination": "^10.49"
+		"illuminate/database": "^10.0|^11.0",
+		"illuminate/http": "^10.0|^11.0",
+		"illuminate/pagination": "^10.0|^11.0",
+		"illuminate/support": "^10.0|^11.0"
 	},
 	"autoload": {
 		"psr-4": {
-			"Givanov95\\DataTable\\": "src/",
-			"Givanov95\\DataTable\\Tests\\": "tests/"
+			"Givanov95\\DataTable\\": "src/"
 		}
 	},
 	"require-dev": {
 		"phpunit/phpunit": "^10.0",
-		"friendsofphp/php-cs-fixer": "dev-master"
+		"friendsofphp/php-cs-fixer": "^3.0"
 	},
 	"minimum-stability": "stable",
 	"prefer-stable": true

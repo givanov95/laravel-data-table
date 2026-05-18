@@ -4,134 +4,72 @@ declare(strict_types=1);
 
 namespace Givanov95\DataTable;
 
-use Psr\Container\ContainerExceptionInterface;
-use Psr\Container\NotFoundExceptionInterface;
+use Illuminate\Http\Request;
 
-class Ordering
+final class Ordering
 {
-    /**
-     * The key by which to order the results.
-     *
-     * @var string|mixed
-     */
     public string $key;
 
-    /**
-     * The direction of the ordering (ASC or DESC).
-     *
-     * @var string|mixed
-     */
     public string $direction;
 
-    /**
-     * The name of the column to be used for ordering.
-     *
-     * @var string
-     */
     public string $columnName;
 
-    /**
-     * Indicates if the ordering involves relations.
-     *
-     * @var bool
-     */
-    public bool $hasRelations;
+    public bool $hasRelations = false;
 
-    /**
-     * A string representation of the relations.
-     *
-     * @var null|string
-     */
-    public ?string $relationsString;
+    public ?string $relationsString = null;
 
-    /**
-     * A string representation of the relations.
-     *
-     * @var null|array
-     */
-    public ?array $relationsArray;
+    /** @var string[] */
+    public array $relationsArray = [];
 
-    /**
-     * Create a new Ordering instance.
-     *
-     * @param  string                      $key
-     * @param  string                      $direction
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
-     */
     public function __construct(string $key = 'id', string $direction = 'DESC')
     {
-        $orderByValues = request()->get('ordering', [
-            'key'       => $key,
-            'direction' => $direction,
-        ]);
-
-        $this->key = $orderByValues['key'];
-        $this->direction = $orderByValues['direction'];
+        $this->key = $key;
+        $this->direction = $direction;
 
         $this->initPropsFromKey();
     }
 
     /**
-     * Initialize properties.
-     *
-     * @return void
+     * Build an Ordering from a Laravel Request, looking up the configured
+     * `ordering` parameter (`ordering[key]`, `ordering[direction]`).
      */
-    private function initPropsFromKey(): void
+    public static function fromRequest(Request $request, string $defaultKey = 'id', string $defaultDirection = 'DESC'): self
     {
-        $relationsArray = explode('.', $this->key);
-        $this->columnName = array_pop($relationsArray);
-        $this->relationsArray = $relationsArray;
-        $this->hasRelations = ! empty($this->relationsArray);
+        $orderingKey = DataTableConfig::getOrderingKey();
+        $values = $request->input($orderingKey, [
+            'key'       => $defaultKey,
+            'direction' => $defaultDirection,
+        ]);
 
-        if ($this->hasRelations) {
-            $this->relationsString = implode('.', $this->relationsArray);
+        if (! is_array($values)) {
+            $values = [
+                'key'       => $defaultKey,
+                'direction' => $defaultDirection,
+            ];
         }
+
+        return new self(
+            key: (string) ($values['key'] ?? $defaultKey),
+            direction: (string) ($values['direction'] ?? $defaultDirection),
+        );
     }
 
-    /**
-     * Get the value of key.
-     *
-     * @return string
-     */
+    private function initPropsFromKey(): void
+    {
+        $relations = explode('.', $this->key);
+        $this->columnName = (string) array_pop($relations);
+        $this->relationsArray = $relations;
+        $this->hasRelations = ! empty($relations);
+        $this->relationsString = $this->hasRelations ? implode('.', $relations) : null;
+    }
+
     public function getKey(): string
     {
         return $this->key;
     }
 
-    /**
-     * Set the value of key.
-     *
-     * @param  string $key
-     * @return self
-     */
-    public function setKey(string $key): self
-    {
-        $this->key = $key;
-
-        return $this;
-    }
-
-    /**
-     * Get the value of direction.
-     *
-     * @return string
-     */
     public function getDirection(): string
     {
         return $this->direction;
-    }
-
-    /**
-     * Set the value of direction.
-     *
-     * @param  string $direction
-     * @return self
-     */
-    public function setDirection(string $direction): self
-    {
-        $this->direction = $direction;
-
-        return $this;
     }
 }

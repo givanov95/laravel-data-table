@@ -1,0 +1,46 @@
+{
+    "name": "@givanov95/vue-data-table",
+    "version": "0.2.0",
+    "description": "Vue 3 + Inertia data-table components for givanov95/laravel-data-table.",
+    "license": "MIT",
+    "author": {
+        "name": "Georgi Ivanov",
+        "email": "joroz95@gmail.com"
+    },
+    "type": "module",
+    "main": "resources/js/index.ts",
+    "module": "resources/js/index.ts",
+    "types": "resources/js/index.ts",
+    "exports": {
+        ".": {
+            "types": "./resources/js/index.ts",
+            "import": "./resources/js/index.ts"
+        },
+        "./*": "./resources/js/*"
+    },
+    "files": [
+        "resources/js",
+        "README.md",
+        "LICENSE"
+    ],
+    "peerDependencies": {
+        "@inertiajs/vue3": "^1.0.0 || ^2.0.0",
+        "vue": "^3.2.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.5.0",
+        "vue": "^3.4.0",
+        "@inertiajs/vue3": "^1.0.0"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit"
+    },
+    "keywords": [
+        "vue",
+        "vue3",
+        "inertia",
+        "laravel",
+        "data-table",
+        "datatable"
+    ]
+}

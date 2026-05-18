@@ -5,504 +5,139 @@ declare(strict_types=1);
 namespace Givanov95\DataTable;
 
 use Givanov95\DataTable\Columns\Column;
-use Givanov95\DataTable\Columns\ColumnRelation;
 use Givanov95\DataTable\Columns\DateColumn;
 use Givanov95\DataTable\Columns\EnumColumn;
 use Givanov95\DataTable\Columns\PriceColumn;
+use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Columns\TranslatableColumn;
+use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\App;
 
+/**
+ * Server-side DataTable builder for Laravel. Wraps an Eloquent query, applies
+ * filtering / ordering / pagination based on the incoming HTTP request, and
+ * produces a JSON-friendly payload that the bundled Vue components consume.
+ *
+ * @template TModel of \Illuminate\Database\Eloquent\Model
+ */
 class DataTable
 {
-    /**
-     * @var Paginator
-     */
     public Paginator $paginator;
 
-    /**
-     * The array that holds the table ordering information for the dataТable.
-     *
-     * @var ?RawOrdering
-     */
     public ?RawOrdering $rawOrdering = null;
 
-    /**
-     * @var Collection<Column>
-     */
-    public Collection $columns;
-
-    /**
-     * The retrieved data.
-     *
-     * @var Collection<Model>
-     */
+    /** @var Collection<int, \Illuminate\Database\Eloquent\Model> */
     public Collection $data;
 
-    /**
-     * @var Builder
-     */
-    private Builder $builder;
+    /** @var Collection<string, Column> */
+    public Collection $columns;
 
-    /**
-     * @var ColumnFilter
-     */
-    private ColumnFilter $columnFilter;
+    /** @var Collection<string, TranslatableColumn> */
+    public Collection $translatableColumns;
 
-    /**
-     * @var Collection<EnumColumn>
-     */
+    /** @var Collection<string, EnumColumn> */
     private Collection $enumColumns;
 
-    /**
-     * @var Collection<PriceColumn>
-     */
+    /** @var Collection<string, PriceColumn> */
     private Collection $priceColumns;
 
-    /**
-     * @var Collection<DateColumn>
-     */
+    /** @var Collection<string, DateColumn> */
     private Collection $dateColumns;
 
-    /**
-     * @var Collection<TableRelation>
-     */
+    /** @var Collection<int, TableRelation> */
     private Collection $relations;
 
-    /**
-     * The array that holds the table ordering information for the dataТable.
-     *
-     * @var Ordering
-     */
+    private Builder $builder;
+
+    private ColumnFilter $columnFilter;
+
     private Ordering $ordering;
 
-    /**
-     * @var SoftRestorer
-     */
-    private SoftRestorer $softRestorer;
+    private readonly Request $request;
 
-    /**
-     * Create a new DataTable instance.
-     *
-     * @param Builder $builder
-     */
-    public function __construct(Builder $builder)
+    public function __construct(Builder $builder, ?Request $request = null)
     {
         $this->relations = new Collection();
         $this->columns = new Collection();
-        $this->dateColumns = new Collection();
+        $this->translatableColumns = new Collection();
         $this->enumColumns = new Collection();
         $this->priceColumns = new Collection();
+        $this->dateColumns = new Collection();
         $this->columnFilter = new ColumnFilter($this);
-        $this->ordering = new Ordering();
+
+        $this->request = $request ?? App::make(Request::class);
+        $this->ordering = Ordering::fromRequest($this->request);
 
         $this->setBuilder($builder);
     }
 
     /**
-     * Apply filtering and ordering logic based on the request parameters.
+     * Apply filtering / ordering / pagination and materialise the result.
      *
-     * @param  int       $paginate
-     * @param  ?callable $callbackBeforePaginate - callback before the function order and paginate -> Gets the model as param
-     * @return self
+     * @param ?callable(Builder):void $callbackBeforePaginate Custom hook applied right before paginate(); receives the builder.
      */
-    public function run(?DataTableParams $params = null, ?callable $callbackBeforePaginate = null): self
-    {
-        $params ??= new DataTableParams();
-
-        $globalFilterText = $params->globalFilter;
-        $paginate = $params->perPage;
+    public function process(
+        ?DataTableParams $params = null,
+        ?callable $callbackBeforePaginate = null,
+    ): self {
+        $params ??= DataTableParams::fromRequest($this->request);
 
         $this->initRelations();
-
         $this->applyModelFiltering($params);
-
         $this->softRestoreRecord($params);
-
         $this->applyOrderByColumns();
 
-        if ($globalFilterText) {
-            $this->applyGlobalFilter($globalFilterText);
+        if ($params->globalFilter !== null && $params->globalFilter !== '') {
+            $this->applyGlobalFilter($params->globalFilter);
         }
 
         $this->applyCallbackBeforePaginate($callbackBeforePaginate);
 
-        /**
-         * @var LengthAwarePaginator
-         */
-        $lengthAwarePaginator = $this->getBuilder()->paginate($paginate);
-        $paginator = new Paginator(
-            $lengthAwarePaginator->withQueryString()
-        );
+        /** @var LengthAwarePaginatorContract $lengthAwarePaginator */
+        $lengthAwarePaginator = $this->getBuilder()->paginate($params->perPage);
+        $this->paginator = new Paginator($lengthAwarePaginator->withQueryString());
 
-        $this->setPaginator($paginator);
+        $this->data = (new Collection($this->paginator->items()))->map(function ($item) {
+            foreach ($this->translatableColumns as $translatableColumn) {
+                $key = $translatableColumn->getTranslationKey();
+                $databaseColumnName = DataTableConfig::getTranslatableColumnName();
+                $translation = optional($item->translations)->firstWhere($databaseColumnName, $key);
 
-        $data = (new Collection($this->getPaginator()->items()))
-            ->map(function ($item) {
-                foreach ($this->getTranslatableColumns() as $columnKey => $column) {
-                    $translation = $item->translations->firstWhere('key', $columnKey);
-                    if ($translation) {
-                        $item->{$columnKey} = $translation->text;
-                    }
+                if ($translation) {
+                    $item->{$key} = $translation->text;
                 }
+            }
 
-                return $item;
-            });
-
-        $this->setData($data);
+            return $item;
+        });
 
         return $this;
     }
 
-    private function initRelations(): void
-    {
-        $builder = $this->getBuilder();
-
-        foreach ($this->getRelations() as $relation) {
-            $builder->with(
-                [$relation->relationsString => function ($query) use ($relation) {
-                    $relationSelectColumns = $relation?->columnsToSelect ?? null;
-
-                    if ($relationSelectColumns) {
-                        $query->select($relationSelectColumns);
-                    }
-                }]
-            );
-        }
-
-        $this->setBuilder($builder);
-    }
-
     /**
-     * Perform an advanced search on the model.
+     * Mutate the query directly. Useful for ad-hoc filters that don't map
+     * cleanly to a Column definition.
      *
-     * @param  callable $callback A callback function to customize the search query.
-     *                            The callback receives the query as its argument and can modify it.
-     * @return self     the current instance of the class
+     * @param callable(Builder):void $callback
      */
     public function advancedSearch(callable $callback): self
     {
-        $builder = $this->getBuilder();
-        $callback($builder);
+        $callback($this->getBuilder());
 
         return $this;
     }
 
-    /**
-     * Apply the model filtering.
-     *
-     * @return void
-     */
-    private function applyModelFiltering(DataTableParams $params): void
-    {
-        $modelFiltering = new ModelFiltering();
-        $builder = $this->getBuilder();
+    /*
+    |--------------------------------------------------------------------------
+    | Relation eager-loading
+    |--------------------------------------------------------------------------
+    */
 
-        if ('true' === $params->trashed) {
-            $builder = $modelFiltering->onlyTrashed()->apply($builder);
-        }
-
-        $this->setBuilder($builder);
-    }
-
-    /**
-     * Remove deleted_at from the record.
-     *
-     * @return void
-     */
-    private function softRestoreRecord(DataTableParams $params): void
-    {
-        if (! $params->restoreId) {
-            return;
-        }
-
-        $model = $this
-            ->getBuilder()
-            ->getModel()
-            ->withTrashed()
-            ->findOrFail($params->restoreId);
-
-        $softRestorer = new SoftRestorer($model);
-        $softRestorer->restore();
-    }
-
-    /**
-     * Apply a column filter on a specific column.
-     *
-     * @param  Builder $queryBuilder
-     * @param  string  $columnKey    the column key to filter
-     * @param  mixed   $filterValue  the filter value
-     * @param  bool    $useOrWhere   indicates if the filter should use 'orWhere' or 'andWhere' (default: false)
-     * @return self
-     */
-    private function applyColumnFilter(Builder $queryBuilder, string $columnKey, $filterValue, bool $useOrWhere = false): self
-    {
-        $columnFilter = $this->columnFilter->apply($queryBuilder, $columnKey, $filterValue, $useOrWhere);
-
-        $this->setBuilder($columnFilter->getBuilder());
-
-        return $this;
-    }
-
-    /**
-     * Apply callback before pagination.
-     *
-     * @param  ?callable $callbackBeforePaginate
-     * @return void
-     */
-    protected function applyCallbackBeforePaginate($callbackBeforePaginate): void
-    {
-        $currentBuilder = $this->getBuilder();
-
-        if ($callbackBeforePaginate) {
-            $newBuilder = $currentBuilder->where(function ($query) use ($callbackBeforePaginate) {
-                $callbackBeforePaginate($query);
-            });
-
-            $this->setBuilder($newBuilder);
-        }
-    }
-
-    /**
-     * Order the columns by set value.
-     *
-     * @return self
-     */
-    public function applyOrderByColumns(): self
-    {
-        $ordering = $this->getOrdering();
-        $rawOrdering = $this->getRawOrdering();
-        $builder = $this->getBuilder();
-
-        $mainModel = $builder->getModel();
-        $mainTable = $mainModel->getTable();
-
-        $mainModelColumnsToSelect = $builder->getQuery()->getColumns();
-
-        // Ensure we only select main table columns (avoid ambiguous columns after join)
-        if (! empty($mainModelColumnsToSelect)) {
-            $builder->getQuery()->columns = [];
-
-            foreach ($mainModelColumnsToSelect as $column) {
-                $builder->addSelect("{$mainTable}.{$column}");
-            }
-        } else {
-            $builder->select("{$mainTable}.*");
-        }
-
-        // RAW ordering always wins
-        if ($rawOrdering) {
-            $builder->orderByRaw($rawOrdering->getString());
-            $this->setBuilder($builder);
-
-            return $this;
-        }
-
-        // Get the column object
-        $orderingColumn = $this->getColumnByKey($ordering->columnName);
-
-        if (! $orderingColumn) {
-            $builder->orderBy("{$mainTable}.{$ordering->columnName}", $ordering->direction);
-            $this->setBuilder($builder);
-
-            return $this;
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Translatable column ordering
-        |--------------------------------------------------------------------------
-        */
-        if ($orderingColumn instanceof TranslatableColumn) {
-
-            $modelClass = $mainModel::class;
-
-            $builder->leftJoin('translations as t', function ($join) use (
-                $mainTable,
-                $modelClass,
-                $orderingColumn) {
-                $join->on('t.translatable_id', '=', "{$mainTable}.id")
-                    ->where('t.translatable_type', '=', $modelClass)
-                    ->where('t.locale', '=', $orderingColumn->getLocale())
-                    ->where('t.key', '=', $orderingColumn->getTranslationKey());
-            });
-
-            $builder->orderBy('t.text', $ordering->direction);
-
-            $this->setBuilder($builder);
-
-            return $this;
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Normal column ordering (no relations)
-        |--------------------------------------------------------------------------
-        */
-        if (! $ordering->hasRelations) {
-            $builder->orderBy("{$mainTable}.{$ordering->columnName}", $ordering->direction);
-        } else {
-
-            /*
-            |--------------------------------------------------------------------------
-            | Relation ordering
-            |--------------------------------------------------------------------------
-            */
-            $relations = explode('.', $ordering->relationsString);
-            $this->applyRelationOrdering($builder, $relations, $mainTable, $ordering);
-        }
-
-        $this->setBuilder($builder);
-
-        return $this;
-    }
-
-    /**
-     * Applying the ordering by relations.
-     *
-     * @param  Builder       $builder
-     * @param  array<string> $relations
-     * @param  string        $prevTable
-     * @param  Ordering      $ordering
-     * @return void
-     */
-    protected function applyRelationOrdering(Builder $builder, array $relations, string $prevTable, Ordering $ordering): void
-    {
-        $parentModel = $builder->getModel();
-        foreach ($relations as $relation) {
-            $relationInstance = $parentModel->{$relation}();
-            $relatedModel = $relationInstance->getRelated();
-            $relatedTable = $relatedModel->getTable();
-
-            if ($relationInstance instanceof \Illuminate\Database\Eloquent\Relations\MorphOne) {
-                $morphType = $relationInstance->getMorphType();
-                $morphId = $relationInstance->getForeignKeyName();
-                $builder->leftJoin("{$relatedTable} AS {$relation}", function ($join) use ($prevTable, $relation, $morphType, $morphId, $parentModel) {
-                    $join->on("{$relation}.{$morphId}", '=', "{$prevTable}.id")
-                        ->where("{$relation}.{$morphType}", '=', $parentModel->getMorphClass());
-                });
-            } else {
-                $foreignKey = $relationInstance->getForeignKeyName();
-                $ownerKeyName = $relationInstance->getOwnerKeyName();
-                $builder->leftJoin("{$relatedTable} AS {$relation}", "{$relation}.{$ownerKeyName}", '=', "{$prevTable}.{$foreignKey}");
-            }
-
-            $prevTable = $relation;
-            $parentModel = $relatedModel;
-        }
-        $columnName = "{$prevTable}.{$ordering->columnName}";
-        $builder->orderBy($columnName, $ordering->direction);
-    }
-
-    /**
-     * Apply a global search filter on all searchable columns.
-     * Usage with joins: Needs to write the joined table and the column with dot.
-     * Example usage: Model with relations: Vehicle::with(['model:id,name', 'model.make']); (DataTable object)->setColumn('make.name', 'Make', true).
-     *
-     * @param  mixed $searchText the search text
-     * @return self
-     */
-    private function applyGlobalFilter(string $searchText): self
-    {
-        $newBuilder = $this->getBuilder();
-        $searchableColumns = $this->getAllSearchableColumns()->keys()->toArray();
-
-        $newBuilder->where(function ($query) use ($searchText, $searchableColumns) {
-            foreach ($searchableColumns as $columnKey) {
-                $column = $this->getColumnByKey($columnKey);
-
-                if ($column instanceof TranslatableColumn) {
-                    $query->orWhereHas('translations', function ($q) use ($column, $searchText) {
-                        $q->where('locale', $column->getLocale())
-                          ->where('key', $column->getTranslationKey())
-                          ->where('text', 'LIKE', '%'.$searchText.'%');
-                    });
-
-                    continue;
-                }
-
-                //    Search in the relation tables
-                if ($column->relation) {
-                    $query->orWhereHas($column->relation->relationString, function ($q) use ($column, $searchText) {
-                        $q->where($column->relation->relationColumn, 'LIKE', '%'.$searchText.'%');
-                    });
-                } else {
-                    // Search in the main table
-                    $this->applyColumnFilter($query, $columnKey, $searchText, true);
-                }
-            }
-        });
-
-        $this->setBuilder($newBuilder);
-
-        return $this;
-    }
-
-    /**
-     * Get the value of builder.
-     *
-     * @return Builder
-     */
-    public function getBuilder(): Builder
-    {
-        return $this->builder;
-    }
-
-    /**
-     * Set the value of builder.
-     *
-     * @param  Builder $builder
-     * @return self
-     */
-    public function setBuilder(Builder $builder): self
-    {
-        $this->builder = $builder;
-
-        return $this;
-    }
-
-    /**
-     * Get the value of paginator.
-     *
-     * @return Paginator
-     */
-    public function getPaginator(): Paginator
-    {
-        return $this->paginator;
-    }
-
-    /**
-     * Set the value of paginator.
-     *
-     * @param  Paginator $paginator
-     * @return self
-     */
-    public function setPaginator(Paginator $paginator): self
-    {
-        $this->paginator = $paginator;
-
-        return $this;
-    }
-
-    /**
-     * Get the value of relations.
-     *
-     * @return Collection<TableRelation>
-     */
-    public function getRelations(): Collection
-    {
-        return $this->relations;
-    }
-
-    /**
-     * Set the value of relations.
-     *
-     * @param  string $relationString
-     * @param  ?array $columnsToSelect
-     * @return self
-     */
     public function setRelation(string $relationString, ?array $columnsToSelect = null): self
     {
         $relation = new TableRelation($relationString);
@@ -516,209 +151,430 @@ class DataTable
         return $this;
     }
 
-    /**
-     * Get all searchable columns from the columns array.
-     *
-     * @return Collection<Column> the searchable columns array
-     */
-    private function getAllSearchableColumns(): Collection
+    /** @return Collection<int, TableRelation> */
+    public function getRelations(): Collection
     {
-        return $this->getColumns()->filter(fn ($column) => $column->searchable);
+        return $this->relations;
+    }
+
+    private function initRelations(): void
+    {
+        $builder = $this->getBuilder();
+
+        foreach ($this->getRelations() as $relation) {
+            $builder->with([
+                $relation->relationsString => function ($query) use ($relation) {
+                    if (! empty($relation->columnsToSelect)) {
+                        $query->select($relation->columnsToSelect);
+                    }
+                },
+            ]);
+        }
+
+        $this->setBuilder($builder);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Columns
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Register a column. Accepts either a Column object or positional arguments:
+     *
+     *     ->setColumn('id', '#', searchable: true, orderable: true)
+     *     ->setColumn(new Column('id', '#', true, true))
+     */
+    public function setColumn(
+        string|Column $keyOrColumn,
+        ?string $label = null,
+        bool $searchable = false,
+        bool $orderable = false,
+        bool $exactMatch = false,
+    ): self {
+        $column = $keyOrColumn instanceof Column
+            ? $keyOrColumn
+            : new Column(
+                databaseColumnName: $keyOrColumn,
+                label: $label,
+                searchable: $searchable,
+                orderable: $orderable,
+                exactMatch: $exactMatch,
+            );
+
+        $this->columns->put($column->getDatabaseColumnName(), $column);
+
+        return $this;
+    }
+
+    public function setRelationColumn(RelationColumn $relationColumn): self
+    {
+        $this->columns->put($relationColumn->getDatabaseColumnName(), $relationColumn);
+
+        return $this;
+    }
+
+    public function setTranslatableColumn(TranslatableColumn $translatableColumn): self
+    {
+        $this->translatableColumns->put($translatableColumn->getTranslationKey(), $translatableColumn);
+        $this->columns->put($translatableColumn->getTranslationKey(), $translatableColumn);
+
+        return $this;
     }
 
     /**
-     * Get column by key.
+     * Register an enum-aware column.
      *
-     * @param  string      $key
-     * @return null|Column
+     * @param class-string<\BackedEnum> $enumClass
      */
-    public function getColumnByKey(string $key): null|Column
+    public function setEnumColumn(string $columnKey, string $enumClass): self
     {
-        return $this->getColumns()->get($key);
+        $this->enumColumns->put($columnKey, new EnumColumn($enumClass));
+
+        return $this;
     }
 
-    /**
-     * Get the collection of all columns.
-     *
-     * @return Collection<Column>
-     */
+    public function setPriceColumn(string $columnKey): self
+    {
+        $this->priceColumns->put($columnKey, new PriceColumn());
+
+        return $this;
+    }
+
+    public function setDateColumn(
+        string $columnKey,
+        string $format,
+        string $dateDelimiter = '.',
+        string $timeDelimiter = ':',
+    ): self {
+        $this->dateColumns->put($columnKey, new DateColumn($format, $dateDelimiter, $timeDelimiter));
+
+        return $this;
+    }
+
+    /** @return Collection<string, Column> */
     public function getColumns(): Collection
     {
         return $this->columns;
     }
 
-    /**
-     * Set a column with its properties.
-     *
-     * @param  ?string     $relationString
-     * @param  null|string $label          the column label
-     * @param  bool        $searchable     indicates if the column is searchable
-     * @param  bool        $orderable      indicates if the column is orderable
-     * @param  bool        $exactMatch     indicates if the search should be an exact match
-     * @return self
-     */
-    public function setColumn(?string $relationString = null, ?string $label = null, bool $searchable = false, bool $orderable = false, bool $exactMatch = false): self
+    public function getColumnByKey(string $key): ?Column
     {
-        $column = new Column(
-            label: $label,
-            searchable: $searchable,
-            orderable: $orderable,
-            exactMatch: $exactMatch
-        );
-
-        $relationsArray = explode('.', $relationString);
-
-        if (count($relationsArray) > 1) {
-            $relation = new ColumnRelation($relationsArray);
-
-            $column->setRelation($relation);
+        if ($this->columns->has($key)) {
+            return $this->columns->get($key);
         }
 
-        $this->columns->put($relationString, $column);
+        foreach ($this->columns as $column) {
+            if ($column->getDatabaseColumnName() === $key) {
+                return $column;
+            }
+        }
 
-        return $this;
+        foreach ($this->translatableColumns as $column) {
+            if ($column->getTranslationKey() === $key) {
+                return $column;
+            }
+        }
+
+        return null;
     }
 
-    /**
-     * Get the data.
-     *
-     * @return mixed
-     */
-    public function getData()
+    /** @return Collection<string, TranslatableColumn> */
+    public function getTranslatableColumns(): Collection
     {
-        return $this->data;
+        return $this->translatableColumns;
     }
 
-    /**
-     * Set data.
-     *
-     * @param  mixed $data
-     * @return self
-     */
-    private function setData($data): self
+    /** @return Collection<string, RelationColumn> */
+    public function getRelationColumns(): Collection
     {
-        $this->data = $data;
-
-        return $this;
+        return $this->columns->filter(fn (Column $column) => $column instanceof RelationColumn);
     }
 
-    /**
-     * Get the value of enumColumns.
-     *
-     * @return Collection<EnumColumn>
-     */
+    /** @return Collection<string, EnumColumn> */
     public function getEnumColumns(): Collection
     {
         return $this->enumColumns;
     }
 
-    /**
-     * Set the value of enumColumns.
-     *
-     * @param  string $key
-     * @param  string $enumClassName
-     * @return self
-     */
-    public function setEnumColumn(string $key, string $enumClassName): self
-    {
-
-        $this->enumColumns->put($key, $enumClassName);
-
-        return $this;
-    }
-
-    /**
-     * Get the value of enums.
-     *
-     * @return Collection<PriceColumn>
-     */
+    /** @return Collection<string, PriceColumn> */
     public function getPriceColumns(): Collection
     {
         return $this->priceColumns;
     }
 
-    /**
-     * Set the value of enums.
-     *
-     * @param  string $key
-     * @return self
-     */
-    public function setPriceColumn(string $key): self
-    {
-        $this->priceColumns->put($key, new PriceColumn());
-
-        return $this;
-    }
-
-    /**
-     * Get the value of dateColumns.
-     *
-     * @return Collection<DateColumn>
-     */
+    /** @return Collection<string, DateColumn> */
     public function getDateColumns(): Collection
     {
         return $this->dateColumns;
     }
 
-    /**
-     * Set the value of dateColumns.
-     *
-     * @param  string  $key
-     * @param  string  $format
-     * @param  ?string $dateDelimiter
-     * @param  ?string $timeDelimiter
-     * @return self
-     */
-    public function setDateColumn(string $key, string $format, ?string $dateDelimiter = '.', ?string $timeDelimiter = ':'): self
+    /** @return Collection<string, Column> */
+    private function getAllSearchableColumns(): Collection
     {
-        $this->dateColumns->put($key, new DateColumn($format, $dateDelimiter, $timeDelimiter));
+        return $this->columns->filter(fn (Column $column) => $column->isSearchable());
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Filtering
+    |--------------------------------------------------------------------------
+    */
+
+    private function applyModelFiltering(DataTableParams $params): void
+    {
+        if ($params->trashed !== 'true') {
+            return;
+        }
+
+        $modelFiltering = (new ModelFiltering())->onlyTrashed();
+        $this->setBuilder($modelFiltering->apply($this->getBuilder()));
+    }
+
+    private function softRestoreRecord(DataTableParams $params): void
+    {
+        if (! $params->restoreId) {
+            return;
+        }
+
+        $model = $this->getBuilder()
+            ->getModel()
+            ->newQueryWithoutScopes()
+            ->withTrashed()
+            ->findOrFail($params->restoreId);
+
+        (new SoftRestorer($model))->restore();
+    }
+
+    private function applyGlobalFilter(string $searchText): self
+    {
+        $newBuilder = $this->getBuilder();
+        $searchableColumns = $this->getAllSearchableColumns()->keys()->all();
+
+        $newBuilder->where(function ($query) use ($searchText, $searchableColumns) {
+            foreach ($searchableColumns as $columnKey) {
+                $column = $this->getColumnByKey($columnKey);
+
+                if (! $column) {
+                    continue;
+                }
+
+                if ($column instanceof TranslatableColumn) {
+                    $query->orWhereHas('translations', function ($q) use ($column, $searchText) {
+                        $q->where('locale', $column->getLocale())
+                            ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey())
+                            ->where('text', 'LIKE', '%'.$searchText.'%');
+                    });
+
+                    continue;
+                }
+
+                if ($column instanceof RelationColumn) {
+                    $query->orWhereHas($column->relationString, function ($q) use ($column, $searchText) {
+                        $q->where($column->relationColumn, 'LIKE', '%'.$searchText.'%');
+                    });
+
+                    continue;
+                }
+
+                try {
+                    $this->applyColumnFilter($query, $columnKey, $searchText, useOrWhere: true);
+                } catch (InvalidColumnNameException) {
+                    // Skip unknown columns silently — they can't contribute to a global search.
+                }
+            }
+        });
+
+        $this->setBuilder($newBuilder);
 
         return $this;
     }
 
-    public function getTranslatableColumns(): Collection
-    {
-        return $this->getColumns()->filter(fn ($column) => $column instanceof TranslatableColumn);
-    }
-
-    public function setTranslatableColumn(
-        string|int $locale,
-        string $translationKey,
-        ?string $label = null,
-        bool $searchable = false,
-        bool $orderable = false,
-        bool $exactMatch = false
+    private function applyColumnFilter(
+        Builder $queryBuilder,
+        string $columnKey,
+        mixed $filterValue,
+        bool $useOrWhere = false,
     ): self {
-        $column = new TranslatableColumn(
-            locale: $locale,
-            translationKey: $translationKey,
-            label: $label,
-            searchable: $searchable,
-            orderable: $orderable,
-            exactMatch: $exactMatch
-        );
-
-        $this->columns->put($translationKey, $column);
+        $columnFilter = $this->columnFilter->apply($queryBuilder, $columnKey, $filterValue, $useOrWhere);
+        $this->setBuilder($columnFilter->getBuilder());
 
         return $this;
     }
 
+    private function applyCallbackBeforePaginate(?callable $callbackBeforePaginate): void
+    {
+        if (! $callbackBeforePaginate) {
+            return;
+        }
+
+        $newBuilder = $this->getBuilder()->where(function ($query) use ($callbackBeforePaginate) {
+            $callbackBeforePaginate($query);
+        });
+
+        $this->setBuilder($newBuilder);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ordering
+    |--------------------------------------------------------------------------
+    */
+
+    public function applyOrderByColumns(): self
+    {
+        $ordering = $this->getOrdering();
+        $builder = $this->getBuilder();
+
+        $mainModel = $builder->getModel();
+        $mainTable = $mainModel->getTable();
+
+        $this->qualifyMainSelect($builder, $mainTable);
+
+        if ($this->rawOrdering) {
+            $builder->orderByRaw($this->rawOrdering->getString());
+            $this->setBuilder($builder);
+
+            return $this;
+        }
+
+        $orderingColumn = $this->getColumnByKey($ordering->columnName);
+
+        if (! $orderingColumn) {
+            $builder->orderBy("{$mainTable}.{$ordering->columnName}", $ordering->direction);
+            $this->setBuilder($builder);
+
+            return $this;
+        }
+
+        if ($orderingColumn instanceof TranslatableColumn) {
+            $this->orderByTranslatable($builder, $orderingColumn, $mainTable, $ordering);
+            $this->setBuilder($builder);
+
+            return $this;
+        }
+
+        if (! $ordering->hasRelations) {
+            $builder->orderBy("{$mainTable}.{$ordering->columnName}", $ordering->direction);
+            $this->setBuilder($builder);
+
+            return $this;
+        }
+
+        $this->applyRelationOrdering($builder, explode('.', (string) $ordering->relationsString), $mainTable, $ordering);
+        $this->setBuilder($builder);
+
+        return $this;
+    }
+
+    private function qualifyMainSelect(Builder $builder, string $mainTable): void
+    {
+        $existing = $builder->getQuery()->getColumns();
+
+        if (empty($existing)) {
+            $builder->select("{$mainTable}.*");
+
+            return;
+        }
+
+        $builder->getQuery()->columns = [];
+
+        foreach ($existing as $column) {
+            $builder->addSelect($this->qualifyColumn($column, $mainTable));
+        }
+    }
+
     /**
-     * Get the value of ordering.
-     *
-     * @return Ordering
+     * Prefix a bare column name with the main table; leave already-qualified
+     * names (`table.column`, `table.*`), raw expressions and `*` untouched.
      */
+    private function qualifyColumn(mixed $column, string $mainTable): mixed
+    {
+        if (! is_string($column)) {
+            return $column;
+        }
+
+        if ($column === '*' || str_contains($column, '.') || str_contains($column, '(')) {
+            return $column;
+        }
+
+        return "{$mainTable}.{$column}";
+    }
+
+    private function orderByTranslatable(
+        Builder $builder,
+        TranslatableColumn $column,
+        string $mainTable,
+        Ordering $ordering,
+    ): void {
+        $modelClass = $builder->getModel()::class;
+        $translationTable = DataTableConfig::getTranslatableTable();
+        $translatableKeyColumn = DataTableConfig::getTranslatableColumnName();
+
+        $builder->leftJoin("{$translationTable} as t", function ($join) use (
+            $mainTable,
+            $modelClass,
+            $column,
+            $translatableKeyColumn,
+        ) {
+            $join->on('t.translatable_id', '=', "{$mainTable}.id")
+                ->where('t.translatable_type', '=', $modelClass)
+                ->where('t.locale', '=', $column->getLocale())
+                ->where("t.{$translatableKeyColumn}", '=', $column->getTranslationKey());
+        });
+
+        $builder->orderBy('t.text', $ordering->direction);
+    }
+
+    /**
+     * @param string[] $relations
+     */
+    protected function applyRelationOrdering(Builder $builder, array $relations, string $prevTable, Ordering $ordering): void
+    {
+        $parentModel = $builder->getModel();
+
+        foreach ($relations as $relation) {
+            $relationInstance = $parentModel->{$relation}();
+            $relatedModel = $relationInstance->getRelated();
+            $relatedTable = $relatedModel->getTable();
+
+            if ($relationInstance instanceof MorphOne) {
+                $morphType = $relationInstance->getMorphType();
+                $morphId = $relationInstance->getForeignKeyName();
+                $builder->leftJoin("{$relatedTable} AS {$relation}", function ($join) use (
+                    $prevTable,
+                    $relation,
+                    $morphType,
+                    $morphId,
+                    $parentModel,
+                ) {
+                    $join->on("{$relation}.{$morphId}", '=', "{$prevTable}.id")
+                        ->where("{$relation}.{$morphType}", '=', $parentModel->getMorphClass());
+                });
+            } else {
+                $foreignKey = $relationInstance->getForeignKeyName();
+                $ownerKeyName = $relationInstance->getOwnerKeyName();
+                $builder->leftJoin(
+                    "{$relatedTable} AS {$relation}",
+                    "{$relation}.{$ownerKeyName}",
+                    '=',
+                    "{$prevTable}.{$foreignKey}",
+                );
+            }
+
+            $prevTable = $relation;
+            $parentModel = $relatedModel;
+        }
+
+        $builder->orderBy("{$prevTable}.{$ordering->columnName}", $ordering->direction);
+    }
+
     public function getOrdering(): Ordering
     {
         return $this->ordering;
     }
 
-    /**
-     * Set the value of ordering.
-     *
-     * @param  Ordering $ordering
-     * @return self
-     */
     public function setOrdering(Ordering $ordering): self
     {
         $this->ordering = $ordering;
@@ -726,26 +582,44 @@ class DataTable
         return $this;
     }
 
-    /**
-     * Get the value of rawOrdering.
-     *
-     * @return ?RawOrdering
-     */
     public function getRawOrdering(): ?RawOrdering
     {
         return $this->rawOrdering;
     }
 
-    /**
-     * Set the value of rawOrdering.
-     *
-     * @param  ?RawOrdering $rawOrdering
-     * @return self
-     */
     public function setRawOrdering(?RawOrdering $rawOrdering): self
     {
         $this->rawOrdering = $rawOrdering;
 
         return $this;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Builder / data accessors
+    |--------------------------------------------------------------------------
+    */
+
+    public function getBuilder(): Builder
+    {
+        return $this->builder;
+    }
+
+    private function setBuilder(Builder $builder): self
+    {
+        $this->builder = $builder;
+
+        return $this;
+    }
+
+    public function getPaginator(): Paginator
+    {
+        return $this->paginator;
+    }
+
+    /** @return Collection<int, \Illuminate\Database\Eloquent\Model> */
+    public function getData(): Collection
+    {
+        return $this->data;
     }
 }

@@ -4,17 +4,13 @@ declare(strict_types=1);
 
 namespace Givanov95\DataTable\Columns;
 
-class TranslatableColumn extends Column
-{
-    /**
-     * @var string
-     */
-    public readonly string $translationKey;
+use Givanov95\DataTable\DataTableConfig;
 
-    /**
-     * @var string|int
-     */
+final class TranslatableColumn extends Column
+{
     public readonly string|int $locale;
+
+    public readonly string $translationKey;
 
     public function __construct(
         string|int $locale,
@@ -22,28 +18,26 @@ class TranslatableColumn extends Column
         ?string $label = null,
         bool $searchable = false,
         bool $orderable = false,
-        bool $exactMatch = false
+        bool $exactMatch = false,
     ) {
-        parent::__construct($label, $searchable, $orderable, $exactMatch);
+        parent::__construct(
+            databaseColumnName: DataTableConfig::getTranslatableColumnName(),
+            label: $label,
+            searchable: $searchable,
+            orderable: $orderable,
+            exactMatch: $exactMatch,
+        );
 
-        $this->locale = $locale;
         $this->translationKey = $translationKey;
+        $this->locale = $locale;
     }
 
-    /**
-     * Get the value of translationKey
-     *
-     * @return string
-     */
     public function getTranslationKey(): string
     {
         return $this->translationKey;
     }
 
-    /**
-     * Get the value of locale
-     */
-    public function getLocale()
+    public function getLocale(): string|int
     {
         return $this->locale;
     }

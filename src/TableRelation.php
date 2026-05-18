@@ -4,58 +4,29 @@ declare(strict_types=1);
 
 namespace Givanov95\DataTable;
 
-class TableRelation
+final class TableRelation
 {
-    /**
-     * A string representation of the relations.
-     *
-     * @var string
-     */
     public string $relationsString;
 
-    /**
-     * An array representation of the relations.
-     *
-     * @var array|string[]
-     */
+    /** @var string[] */
     public array $relationsArray;
 
-    /**
-     * Array of columns that will be selected from the relation.
-     *
-     * @var null|array
-     */
+    /** @var ?array<int, string> */
     public ?array $columnsToSelect = null;
 
-    /**
-     * Create a new TableRelation instance.
-     *
-     * @param string $relationsString
-     */
-    public function __construct(
-        string $relationsString,
-    ) {
+    public function __construct(string $relationsString)
+    {
         $this->relationsString = $relationsString;
-
         $this->relationsArray = explode('.', $relationsString);
     }
 
-    /**
-     * Get the value of columnsToSelect.
-     *
-     * @return ?array
-     */
+    /** @return ?array<int, string> */
     public function getColumnsToSelect(): ?array
     {
         return $this->columnsToSelect;
     }
 
-    /**
-     * Set the value of columnsToSelect.
-     *
-     * @param  ?array $columnsToSelect
-     * @return self
-     */
+    /** @param ?array<int, string> $columnsToSelect */
     public function setColumnsToSelect(?array $columnsToSelect): self
     {
         $this->columnsToSelect = $columnsToSelect;

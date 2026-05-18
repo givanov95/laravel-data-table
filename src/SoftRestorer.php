@@ -8,22 +8,14 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\RedirectResponse;
 
-class SoftRestorer
+final class SoftRestorer
 {
     use AuthorizesRequests;
 
-    protected Model $model;
-
-    public function __construct(Model $model)
+    public function __construct(protected Model $model)
     {
-        $this->model = $model;
     }
 
-    /**
-     * Restores the model.
-     *
-     * @return RedirectResponse
-     */
     public function restore(): RedirectResponse
     {
         $this->authorize('restore', [$this->model]);

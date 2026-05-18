@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Givanov95\DataTable;
 
-class ModelFiltering
+use Illuminate\Database\Eloquent\Builder;
+
+final class ModelFiltering
 {
     private bool $showTrashed = false;
 
@@ -24,7 +26,7 @@ class ModelFiltering
         return $this;
     }
 
-    public function apply($query)
+    public function apply(Builder $query): Builder
     {
         if ($this->onlyTrashed) {
             return $query->onlyTrashed();

@@ -6,44 +6,37 @@ namespace Givanov95\DataTable\Columns;
 
 class Column
 {
-    public ?ColumnRelation $relation = null;
-
-    /**
-     * Create a new Column instance.
-     *
-     * @param string $label
-     * @param bool   $searchable
-     * @param bool   $orderable
-     * @param bool   $exactMatch
-     */
     public function __construct(
-        public string $label,
-        public bool $searchable,
-        public bool $orderable,
-        public bool $exactMatch
+        public string $databaseColumnName,
+        public ?string $label = null,
+        public bool $searchable = false,
+        public bool $orderable = false,
+        public bool $exactMatch = false,
     ) {
     }
 
-    /**
-     * Get the value of relation.
-     *
-     * @return ?ColumnRelation
-     */
-    public function getRelation(): ?ColumnRelation
+    public function getDatabaseColumnName(): string
     {
-        return $this->relation;
+        return $this->databaseColumnName;
     }
 
-    /**
-     * Set the value of relation.
-     *
-     * @param  ?ColumnRelation $relation
-     * @return self
-     */
-    public function setRelation(?ColumnRelation $relation): self
+    public function getLabel(): ?string
     {
-        $this->relation = $relation;
+        return $this->label;
+    }
 
-        return $this;
+    public function isSearchable(): bool
+    {
+        return $this->searchable;
+    }
+
+    public function isOrderable(): bool
+    {
+        return $this->orderable;
+    }
+
+    public function isExactMatch(): bool
+    {
+        return $this->exactMatch;
     }
 }

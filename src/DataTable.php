@@ -338,9 +338,7 @@ class DataTable
             return;
         }
 
-        $model = $this->getBuilder()
-            ->getModel()
-            ->newQueryWithoutScopes()
+        $model = $this->getBuilder()->getModel()->newQuery()
             ->withTrashed()
             ->findOrFail($params->restoreId);
 

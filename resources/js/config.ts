@@ -20,11 +20,13 @@ export interface DataTableConfig {
 
 const defaultTranslator: Translator = (key) => key;
 
-const state: DataTableConfig = {
+const defaults: DataTableConfig = {
     translator: defaultTranslator,
     route: null,
     reloadDebounceMs: 1200,
 };
+
+const state: DataTableConfig = { ...defaults };
 
 export function setConfig(partial: Partial<DataTableConfig>): void {
     if (partial.translator) state.translator = partial.translator;
@@ -32,6 +34,13 @@ export function setConfig(partial: Partial<DataTableConfig>): void {
     if (typeof partial.reloadDebounceMs === "number") {
         state.reloadDebounceMs = partial.reloadDebounceMs;
     }
+}
+
+/** Restore every config value to its built-in default. Useful for tests. */
+export function resetConfig(): void {
+    state.translator = defaults.translator;
+    state.route = defaults.route;
+    state.reloadDebounceMs = defaults.reloadDebounceMs;
 }
 
 export function t(key: string, replacements?: Record<string, unknown>): string {

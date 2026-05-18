@@ -8,7 +8,7 @@ export { default as DataTableRadioButton } from "./components/RadioButton.vue";
 export { default as DataTableRadioButtonToggle } from "./components/RadioButtonToggle.vue";
 
 export { DataTablePlugin } from "./install";
-export { setConfig, t, r, getReloadDebounceMs } from "./config";
+export { setConfig, resetConfig, t, r, getReloadDebounceMs } from "./config";
 export type { DataTableConfig, Translator, Router } from "./config";
 export type { DataTablePluginOptions } from "./install";
 

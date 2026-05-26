@@ -54,8 +54,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - run: npm ci
+      # package-lock.json не се commit-ва (виж .gitignore), затова
+      # npm install вместо npm ci — аналогично на composer install по-горе
+      - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test

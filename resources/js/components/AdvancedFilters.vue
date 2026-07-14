@@ -20,7 +20,7 @@ const closeModal = () => {
 };
 
 const advancedSearch = debounce(() => {
-    const form = useForm(props.filterValues);
+    const form = useForm(props.filterValues as Record<string, any>);
     const target = r(props.reloadRoute, props.reloadRouteParams) as string | undefined;
 
     if (!target) {

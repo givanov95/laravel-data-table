@@ -112,7 +112,7 @@ const handleRestoreRecord = async (id: number) => {
 
     const currentUrl = new URL(window.location.href);
     currentUrl.searchParams.delete("restore_id");
-    router.replace(currentUrl.toString());
+    router.replace({ url: currentUrl.toString() });
 };
 </script>
 

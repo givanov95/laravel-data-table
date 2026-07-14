@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { RequestPayload } from "@inertiajs/core";
 import { router } from "@inertiajs/vue3";
 import { ref } from "vue";
 
@@ -17,7 +18,7 @@ const filterGlobalValue = new URLSearchParams(window.location.search).get(
 const inputValue = ref<string | null>(filterGlobalValue);
 
 const triggerReload = (): void => {
-    const data: Record<string, unknown> = {
+    const data: RequestPayload = {
         filter: {
             global: inputValue.value,
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,

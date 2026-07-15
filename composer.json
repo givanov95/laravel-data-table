@@ -22,7 +22,7 @@
         "phpunit/phpunit": "^10.0",
         "friendsofphp/php-cs-fixer": "^3.0",
         "orchestra/testbench": "^9.0",
-        "givanov95/laravel-git-hooks": "^0.1.0"
+        "givanov95/laravel-git-hooks": "^1.1"
     },
     "autoload": {
         "psr-4": {

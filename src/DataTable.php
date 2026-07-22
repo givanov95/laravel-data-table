@@ -58,6 +58,8 @@ class DataTable
 
     private Ordering $ordering;
 
+    private DataTableParams $params;
+
     private readonly Request $request;
 
     public function __construct(Builder $builder, ?Request $request = null)
@@ -86,6 +88,7 @@ class DataTable
         ?callable $callbackBeforePaginate = null,
     ): self {
         $params ??= DataTableParams::fromRequest($this->request);
+        $this->params = $params;
 
         $this->initRelations();
         $this->applyModelFiltering($params);
@@ -619,5 +622,66 @@ class DataTable
     public function getData(): Collection
     {
         return $this->data;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Clean array contract
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Produce a clean, framework-standard payload for headless / TanStack-style
+     * frontends. Unlike the object's default JSON serialization (which exposes
+     * the internal `paginator` / `columns` shape consumed by the bundled Vue
+     * widget), this returns a normalised structure:
+     *
+     *     [
+     *       'data'    => [ ...row... ],
+     *       'meta'    => [ current_page, per_page, total, last_page, from, to ],
+     *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
+     *       'state'   => [ search, sort => [column, direction], trashed ],
+     *     ]
+     *
+     * Call it explicitly (`->process()->toArray()`); the default serialization
+     * is left untouched so existing `@givanov95/vue-data-table` screens keep
+     * working. Must be called after {@see process()}.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        $total = $this->paginator->itemsLength;
+        $perPage = $this->paginator->perPage;
+        $currentPage = $this->paginator->currentPage;
+
+        return [
+            'data' => $this->data->values()->all(),
+            'meta' => [
+                'current_page' => $currentPage,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $this->paginator->lastPage,
+                'from' => $total > 0 ? (($currentPage - 1) * $perPage) + 1 : 0,
+                'to' => min($currentPage * $perPage, $total),
+            ],
+            'columns' => $this->columns
+                ->map(fn (Column $column, string $key): array => [
+                    'key' => $key,
+                    'label' => $column->getLabel(),
+                    'sortable' => $column->isOrderable(),
+                    'searchable' => $column->isSearchable(),
+                ])
+                ->values()
+                ->all(),
+            'state' => [
+                'search' => $this->params->globalFilter ?? '',
+                'sort' => [
+                    'column' => $this->ordering->key,
+                    'direction' => strtolower($this->ordering->direction),
+                ],
+                'trashed' => $this->params->trashed === 'true',
+            ],
+        ];
     }
 }

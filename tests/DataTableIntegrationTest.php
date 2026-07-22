@@ -53,6 +53,44 @@ final class DataTableIntegrationTest extends TestCase
         $this->assertCount(3, $table->getData());
     }
 
+    public function testToArrayReturnsCleanContract(): void
+    {
+        $request = Request::create('/', 'GET', [
+            'ordering' => ['key' => 'title', 'direction' => 'asc'],
+            'filter'   => ['global' => 'red'],
+        ]);
+
+        $result = (new DataTable(TestArticle::query(), $request))
+            ->setColumn('id', '#', searchable: true, orderable: true)
+            ->setColumn('title', 'Title', searchable: true, orderable: true)
+            ->process()
+            ->toArray();
+
+        // Standard, framework-friendly top-level shape.
+        $this->assertSame(['data', 'meta', 'columns', 'state'], array_keys($result));
+
+        // meta uses Laravel-paginator naming (not the internal camelCase shape).
+        $this->assertSame(1, $result['meta']['current_page']);
+        $this->assertSame(15, $result['meta']['per_page']);
+        $this->assertSame(2, $result['meta']['total']); // "Apples are red" + "Cherries are red"
+        $this->assertSame(1, $result['meta']['last_page']);
+        $this->assertSame(1, $result['meta']['from']);
+        $this->assertSame(2, $result['meta']['to']);
+
+        // columns is an ordered array with clean keys.
+        $this->assertSame([
+            ['key' => 'id', 'label' => '#', 'sortable' => true, 'searchable' => true],
+            ['key' => 'title', 'label' => 'Title', 'sortable' => true, 'searchable' => true],
+        ], $result['columns']);
+
+        // state echoes the applied request.
+        $this->assertSame('red', $result['state']['search']);
+        $this->assertSame(['column' => 'title', 'direction' => 'asc'], $result['state']['sort']);
+        $this->assertFalse($result['state']['trashed']);
+
+        $this->assertCount(2, $result['data']);
+    }
+
     public function testGlobalFilterFindsRowsAcrossSearchableColumns(): void
     {
         $request = Request::create('/', 'GET', ['filter' => ['global' => 'red']]);

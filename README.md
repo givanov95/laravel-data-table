@@ -116,6 +116,40 @@ $table
     ->setColumn('action', __('Action'));
 ```
 
+### Lightweight spatie table (`QueryBuilderTable`)
+
+For lean listings that don't need the column-type system, `QueryBuilderTable`
+wraps [`spatie/laravel-query-builder`](https://github.com/spatie/laravel-query-builder)
+and emits the **same** `{ data, meta, columns, state }` contract, so the same
+frontend consumes it. It handles global search, sorting, the `trashed` toggle,
+a `perPage` cap, and an optional `transform()` for whitelisting output (keep PII
+out of the listing).
+
+```php
+use App\Models\User;
+use Givanov95\DataTable\QueryBuilderTable;
+
+$payload = QueryBuilderTable::for(User::query()->with('roles:id,name'), request())
+    ->columns([
+        ['key' => 'id', 'label' => __('ID'), 'sortable' => true],
+        ['key' => 'first_name', 'label' => __('First name'), 'sortable' => true, 'searchable' => true],
+        ['key' => 'email', 'label' => __('Email'), 'sortable' => true, 'searchable' => true],
+    ])
+    ->allowTrashed()
+    ->defaultSort('id', 'desc')
+    ->transform(fn (User $user) => [
+        'id'         => $user->id,
+        'first_name' => $user->first_name,
+        'email'      => $user->email,
+        'roles'      => $user->roles->map(fn ($r) => ['id' => $r->id, 'name' => $r->name])->all(),
+        'deleted_at' => $user->deleted_at?->toDateTimeString(),
+    ])
+    ->toArray();
+```
+
+Use `DataTable` for column-rich tables; use `QueryBuilderTable` for lean listings
+that want spatie's query power behind a small, reusable facade.
+
 ### Relation columns
 
 ```php

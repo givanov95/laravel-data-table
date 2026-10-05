@@ -51,4 +51,9 @@ class DataTableConfig
     {
         return (int) Config::get('data-table.default_per_page', 15);
     }
+
+    public static function getMaxPerPage(): int
+    {
+        return (int) Config::get('data-table.max_per_page', 100);
+    }
 }

@@ -39,7 +39,7 @@ class QueryBuilderTable
 
     private int $defaultPerPage = 15;
 
-    private int $maxPerPage = 100;
+    private ?int $maxPerPage = null;
 
     /**
      * @param  Builder<TModel>  $query
@@ -108,6 +108,18 @@ class QueryBuilderTable
     public function defaultPerPage(int $perPage): self
     {
         $this->defaultPerPage = $perPage;
+
+        return $this;
+    }
+
+    /**
+     * Override `data-table.max_per_page` for this table.
+     *
+     * @return $this
+     */
+    public function maxPerPage(int $max): self
+    {
+        $this->maxPerPage = $max;
 
         return $this;
     }
@@ -240,13 +252,11 @@ class QueryBuilderTable
 
     private function resolvePerPage(): int
     {
-        $perPage = (int) $this->request->input('perPage');
-
-        if ($perPage < 1) {
-            return $this->defaultPerPage;
-        }
-
-        return min($perPage, $this->maxPerPage);
+        return DataTableParams::clampPerPage(
+            (int) $this->request->input('perPage'),
+            $this->defaultPerPage,
+            $this->maxPerPage ?? DataTableConfig::getMaxPerPage(),
+        );
     }
 
     private function searchTerm(): ?string

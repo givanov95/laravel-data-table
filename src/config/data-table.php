@@ -37,4 +37,17 @@ return [
     |--------------------------------------------------------------------------
     */
     'default_per_page' => 15,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum rows per page
+    |--------------------------------------------------------------------------
+    |
+    | Hard upper bound for the per-page value read from the request, so a
+    | crafted `?perPage=100000` cannot load the whole table at once. Applies to
+    | both DataTable and QueryBuilderTable. Values below 1 fall back to
+    | `default_per_page`.
+    |
+    */
+    'max_per_page' => 100,
 ];

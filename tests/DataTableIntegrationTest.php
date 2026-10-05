@@ -10,7 +10,9 @@ use Givanov95\DataTable\DataTableParams;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class DataTableIntegrationTest extends TestCase
 {
@@ -152,6 +154,96 @@ final class DataTableIntegrationTest extends TestCase
 
         $this->assertSame(2, $table->getPaginator()->perPage);
         $this->assertSame(3, $table->getPaginator()->itemsLength);
+    }
+
+    /**
+     * @return array<string, array{0: string|int, 1: int}>
+     */
+    public static function requestedPerPageProvider(): array
+    {
+        return [
+            'far above the maximum'  => [100000, 100],
+            'exactly the maximum'    => [100, 100],
+            'just above the maximum' => [101, 100],
+            'within bounds'          => [50, 50],
+            'minimum'                => [1, 1],
+            'zero'                   => [0, 15],
+            'negative'               => [-5, 15],
+            'non-numeric'            => ['abc', 15],
+        ];
+    }
+
+    #[DataProvider('requestedPerPageProvider')]
+    public function testParamsFromRequestBoundPerPage(string|int $requested, int $expected): void
+    {
+        $request = Request::create('/', 'GET', ['perPage' => $requested]);
+
+        $this->assertSame($expected, DataTableParams::fromRequest($request)->perPage);
+    }
+
+    public function testParamsFallBackToDefaultWhenPerPageIsMissing(): void
+    {
+        $params = DataTableParams::fromRequest(Request::create('/'));
+
+        $this->assertSame(15, $params->perPage);
+    }
+
+    public function testMaxPerPageIsConfigurable(): void
+    {
+        Config::set('data-table.max_per_page', 500);
+
+        $this->assertSame(300, DataTableParams::fromRequest(
+            Request::create('/', 'GET', ['perPage' => 300]),
+        )->perPage);
+        $this->assertSame(500, DataTableParams::fromRequest(
+            Request::create('/', 'GET', ['perPage' => 100000]),
+        )->perPage);
+    }
+
+    public function testDefaultPerPageIsCappedByTheMaximum(): void
+    {
+        Config::set('data-table.default_per_page', 200);
+        Config::set('data-table.max_per_page', 50);
+
+        $this->assertSame(50, DataTableParams::fromRequest(Request::create('/'))->perPage);
+        $this->assertSame(50, DataTableParams::fromRequest(
+            Request::create('/', 'GET', ['perPage' => 0]),
+        )->perPage);
+    }
+
+    public function testBoundsStayAtOneOrMoreWithBrokenConfig(): void
+    {
+        Config::set('data-table.default_per_page', 0);
+        Config::set('data-table.max_per_page', 0);
+
+        $this->assertSame(1, DataTableParams::fromRequest(
+            Request::create('/', 'GET', ['perPage' => 100000]),
+        )->perPage);
+        $this->assertSame(1, DataTableParams::fromRequest(Request::create('/'))->perPage);
+    }
+
+    public function testProcessCapsAnOversizedPerPageRequest(): void
+    {
+        Config::set('data-table.max_per_page', 2);
+
+        $request = Request::create('/', 'GET', ['perPage' => 100000]);
+
+        $table = (new DataTable(TestArticle::query(), $request))
+            ->setColumn('id', '#')
+            ->process();
+
+        $this->assertSame(2, $table->getPaginator()->perPage);
+        $this->assertCount(2, $table->getData());
+        $this->assertSame(3, $table->getPaginator()->itemsLength);
+    }
+
+    public function testExplicitParamsAreNotCapped(): void
+    {
+        $table = (new DataTable(TestArticle::query(), Request::create('/')))
+            ->setColumn('id', '#')
+            ->process(new DataTableParams(perPage: 5000));
+
+        $this->assertSame(5000, $table->getPaginator()->perPage);
     }
 }
 

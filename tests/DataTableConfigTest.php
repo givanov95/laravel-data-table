@@ -20,6 +20,7 @@ final class DataTableConfigTest extends TestCase
         $this->assertSame('restore_id', DataTableConfig::getRestoreIdKey());
         $this->assertSame('ordering', DataTableConfig::getOrderingKey());
         $this->assertSame(15, DataTableConfig::getDefaultPerPage());
+        $this->assertSame(100, DataTableConfig::getMaxPerPage());
     }
 
     public function testRespectsOverrides(): void
@@ -27,9 +28,11 @@ final class DataTableConfigTest extends TestCase
         Config::set('data-table.translatable_table', 'i18n');
         Config::set('data-table.per_page', 'pageSize');
         Config::set('data-table.default_per_page', 50);
+        Config::set('data-table.max_per_page', 250);
 
         $this->assertSame('i18n', DataTableConfig::getTranslatableTable());
         $this->assertSame('pageSize', DataTableConfig::getPerPageKey());
         $this->assertSame(50, DataTableConfig::getDefaultPerPage());
+        $this->assertSame(250, DataTableConfig::getMaxPerPage());
     }
 }

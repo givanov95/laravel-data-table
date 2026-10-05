@@ -45,8 +45,10 @@ return [
     |
     | Hard upper bound for the per-page value read from the request, so a
     | crafted `?perPage=100000` cannot load the whole table at once. Applies to
-    | both DataTable and QueryBuilderTable. Values below 1 fall back to
-    | `default_per_page`.
+    | both DataTable and QueryBuilderTable. A requested value that is below 1
+    | or not a number falls back to `default_per_page`. The default is capped
+    | by this maximum too. A maximum below 1 is treated as a misconfiguration
+    | (it does not disable the bound) and falls back to 50.
     |
     */
     'max_per_page' => 100,

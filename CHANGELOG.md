@@ -4,21 +4,32 @@
 
 ### Added
 - `data-table.max_per_page` (default `100`) — a hard upper bound for the page size
-  read from the request. `DataTableConfig::getMaxPerPage()` exposes it.
-- `QueryBuilderTable::maxPerPage()` to override that bound for a single table.
+  read from the request. `DataTableConfig::getMaxPerPage()` exposes it. A value
+  below 1 is treated as a misconfiguration and falls back to 50
+  (`DataTableParams::FALLBACK_MAX_PER_PAGE`) instead of disabling the bound.
+- `QueryBuilderTable::maxPerPage()` to override that bound for a single table; it
+  throws `InvalidArgumentException` for a value below 1.
 - `DataTableParams::clampPerPage()` — the shared rule both `DataTable` and
   `QueryBuilderTable` use to turn a requested page size into an effective one.
 
 ### Fixed
 - `perPage` from the request is no longer taken as-is. `?perPage=100000` used to be
   accepted and returned every row at once; it is now cut to `max_per_page`. A value
-  below 1 (zero, negative, non-numeric) falls back to `default_per_page`.
-  `DataTable` and `QueryBuilderTable` now apply the same rule (the latter used to
-  have a hardcoded, non-configurable cap of 100).
+  that is not a number or is below 1 (empty, text, an array, zero, negative) falls
+  back to `default_per_page`. `DataTable` and `QueryBuilderTable` now apply the
+  same rule (the latter used to have a hardcoded, non-configurable cap of 100).
+- An empty `perPage` (what the per-page select's "default" option sends) no longer
+  reaches `paginate()` as `0`, which divided by zero in `DataTable`.
+- `?perPage[]=x` is no longer read as `1`; arrays count as "not a number".
 
 ### Changed
 - Requests asking for more than `max_per_page` rows per page now get `max_per_page`
   rows. Applications whose `perPageOptions` go above 100 must raise `max_per_page`.
+- `?perPage=-1` (and `0`) no longer mean "all rows": Laravel's `limit()` ignored a
+  negative value, so `-1` used to return everything. It now returns the default
+  page size. Export all rows server-side instead.
+- `default_per_page` (and `QueryBuilderTable::defaultPerPage()`) is capped by
+  `max_per_page`: a default above the maximum now yields the maximum.
 - A `DataTableParams` built by hand and passed to `process()` is still used as-is.
 
 ## v3.2.1

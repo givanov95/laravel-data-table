@@ -83,10 +83,17 @@ These keys map directly to the HTTP query parameters the frontend sends.
 
 The page size read from the request is bounded: anything above `max_per_page`
 is cut to it (so `?perPage=100000` cannot load the whole table), and anything
-below 1 (zero, negative, non-numeric) falls back to `default_per_page`. This
-applies to both `DataTable` and `QueryBuilderTable`. If your frontend offers
-`perPageOptions` larger than 100, raise `max_per_page` accordingly. A
-`DataTableParams` you build and pass to `process()` yourself is used as-is.
+that is not a number or is below 1 (empty, text, an array, zero, negative)
+falls back to `default_per_page`. `default_per_page` is capped by
+`max_per_page` too. This applies to both `DataTable` and `QueryBuilderTable`.
+
+- `?perPage=-1` is **not** "all rows" — it gets the default page size. Export
+  all rows server-side instead.
+- A `max_per_page` below 1 is treated as a misconfiguration and falls back to
+  50; it does not turn the bound off.
+- If your frontend offers `perPageOptions` larger than 100, raise
+  `max_per_page` accordingly.
+- A `DataTableParams` you build and pass to `process()` yourself is used as-is.
 
 ---
 
@@ -163,7 +170,8 @@ $payload = QueryBuilderTable::for(User::query()->with('roles:id,name'), request(
 
 The page size is bounded by `data-table.max_per_page` (see
 [Configuration](#configuration)); call `->maxPerPage(50)` to override it for a
-single table, and `->defaultPerPage(25)` to change the fallback.
+single table (it throws `InvalidArgumentException` below 1), and
+`->defaultPerPage(25)` to change the fallback.
 
 Use `DataTable` for column-rich tables; use `QueryBuilderTable` for lean listings
 that want spatie's query power behind a small, reusable facade.

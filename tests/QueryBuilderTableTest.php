@@ -11,6 +11,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 final class QueryBuilderTableTest extends TestCase
@@ -100,7 +101,7 @@ final class QueryBuilderTableTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: string|int, 1: int}>
+     * @return array<string, array{0: mixed, 1: int}>
      */
     public static function requestedPerPageProvider(): array
     {
@@ -110,12 +111,15 @@ final class QueryBuilderTableTest extends TestCase
             'within bounds'         => [2, 2],
             'zero'                  => [0, 15],
             'negative'              => [-5, 15],
+            'minus one (was "all")' => [-1, 15],
             'non-numeric'           => ['abc', 15],
+            'empty string'          => ['', 15],
+            'array'                 => [['x'], 15],
         ];
     }
 
     #[DataProvider('requestedPerPageProvider')]
-    public function testPerPageIsBoundedByTheSharedRule(string|int $requested, int $expected): void
+    public function testPerPageIsBoundedByTheSharedRule(mixed $requested, int $expected): void
     {
         $payload = $this->table(Request::create('/', 'GET', ['perPage' => $requested]))->toArray();
 
@@ -141,6 +145,41 @@ final class QueryBuilderTableTest extends TestCase
 
         $this->assertSame(1, $payload['meta']['per_page']);
         $this->assertCount(1, $payload['data']);
+    }
+
+    public function testDefaultPerPageIsCappedByTheMaximum(): void
+    {
+        $payload = $this->table(Request::create('/'))
+            ->defaultPerPage(200)
+            ->toArray();
+
+        $this->assertSame(100, $payload['meta']['per_page']);
+    }
+
+    public function testPerTableMaximumAlsoCapsTheFallbackDefault(): void
+    {
+        $payload = $this->table(Request::create('/', 'GET', ['perPage' => 0]))
+            ->maxPerPage(2)
+            ->toArray();
+
+        $this->assertSame(2, $payload['meta']['per_page']);
+        $this->assertCount(2, $payload['data']);
+    }
+
+    public function testInvalidMaxPerPageInConfigFallsBackToFifty(): void
+    {
+        Config::set('data-table.max_per_page', 0);
+
+        $payload = $this->table(Request::create('/', 'GET', ['perPage' => 100000]))->toArray();
+
+        $this->assertSame(50, $payload['meta']['per_page']);
+    }
+
+    public function testMaxPerPageRejectsNonPositiveValues(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->table(Request::create('/'))->maxPerPage(0);
     }
 }
 

@@ -157,7 +157,7 @@ final class DataTableIntegrationTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: string|int, 1: int}>
+     * @return array<string, array{0: mixed, 1: int}>
      */
     public static function requestedPerPageProvider(): array
     {
@@ -165,16 +165,22 @@ final class DataTableIntegrationTest extends TestCase
             'far above the maximum'  => [100000, 100],
             'exactly the maximum'    => [100, 100],
             'just above the maximum' => [101, 100],
+            'numeric string'         => ['50', 50],
             'within bounds'          => [50, 50],
             'minimum'                => [1, 1],
             'zero'                   => [0, 15],
             'negative'               => [-5, 15],
+            'minus one (was "all")'  => [-1, 15],
             'non-numeric'            => ['abc', 15],
+            'trailing garbage'       => ['12abc', 15],
+            'empty string'           => ['', 15],
+            'array'                  => [['x'], 15],
+            'nested array'           => [['a' => 1], 15],
         ];
     }
 
     #[DataProvider('requestedPerPageProvider')]
-    public function testParamsFromRequestBoundPerPage(string|int $requested, int $expected): void
+    public function testParamsFromRequestBoundPerPage(mixed $requested, int $expected): void
     {
         $request = Request::create('/', 'GET', ['perPage' => $requested]);
 
@@ -211,15 +217,46 @@ final class DataTableIntegrationTest extends TestCase
         )->perPage);
     }
 
-    public function testBoundsStayAtOneOrMoreWithBrokenConfig(): void
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function invalidMaxPerPageProvider(): array
     {
-        Config::set('data-table.default_per_page', 0);
-        Config::set('data-table.max_per_page', 0);
+        return [
+            'zero'     => [0],
+            'negative' => [-3],
+            'null'     => [null],
+        ];
+    }
 
-        $this->assertSame(1, DataTableParams::fromRequest(
+    #[DataProvider('invalidMaxPerPageProvider')]
+    public function testInvalidMaxPerPageFallsBackInsteadOfDisablingTheBound(mixed $max): void
+    {
+        Config::set('data-table.max_per_page', $max);
+
+        $this->assertSame(50, DataTableParams::fromRequest(
             Request::create('/', 'GET', ['perPage' => 100000]),
         )->perPage);
+        $this->assertSame(15, DataTableParams::fromRequest(Request::create('/'))->perPage);
+    }
+
+    public function testInvalidDefaultPerPageIsKeptAtOne(): void
+    {
+        Config::set('data-table.default_per_page', 0);
+
         $this->assertSame(1, DataTableParams::fromRequest(Request::create('/'))->perPage);
+    }
+
+    public function testEmptyPerPageNoLongerReachesThePaginatorAsZero(): void
+    {
+        // The "default" option of the frontend's per-page select sends an empty
+        // value; passed through as 0 it used to make paginate() divide by zero.
+        $table = (new DataTable(TestArticle::query(), Request::create('/', 'GET', ['perPage' => ''])))
+            ->setColumn('id', '#')
+            ->process();
+
+        $this->assertSame(15, $table->getPaginator()->perPage);
+        $this->assertCount(3, $table->getData());
     }
 
     public function testProcessCapsAnOversizedPerPageRequest(): void

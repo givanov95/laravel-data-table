@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use InvalidArgumentException;
 use Spatie\QueryBuilder\AllowedFilter;
 use Spatie\QueryBuilder\QueryBuilder;
 
@@ -116,9 +117,15 @@ class QueryBuilderTable
      * Override `data-table.max_per_page` for this table.
      *
      * @return $this
+     *
+     * @throws InvalidArgumentException when $max is below 1
      */
     public function maxPerPage(int $max): self
     {
+        if ($max < 1) {
+            throw new InvalidArgumentException("maxPerPage() must be at least 1, {$max} given.");
+        }
+
         $this->maxPerPage = $max;
 
         return $this;
@@ -253,7 +260,7 @@ class QueryBuilderTable
     private function resolvePerPage(): int
     {
         return DataTableParams::clampPerPage(
-            (int) $this->request->input('perPage'),
+            $this->request->input('perPage'),
             $this->defaultPerPage,
             $this->maxPerPage ?? DataTableConfig::getMaxPerPage(),
         );

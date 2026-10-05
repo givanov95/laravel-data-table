@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.2.1
+
+### Fixed
+- `ordering[key]` from the request is now resolved against the declared columns:
+  it is only applied to a column registered with `orderable: true` (for a
+  `RelationColumn`, its `relation.column` path); any other key falls back to the
+  default ordering. Relation joins are built from the path declared on the
+  `RelationColumn`, not from the request. An ordering set with
+  `setOrdering(new Ordering(...))` is still applied as-is.
+- `toArray()['state']['sort']` reports the ordering that was actually applied.
+
+### Changed
+- Columns with `orderable: false` can no longer be sorted by crafting the
+  `ordering[key]` request parameter.
+- Requesting a `RelationColumn` by the key it is registered under (the bare
+  column name, e.g. `name`) now sorts by the related column instead of a
+  same-named column on the main table.
+
 ## v3.2.0
 
 ### Added

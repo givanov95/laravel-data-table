@@ -21,10 +21,18 @@ final class Ordering
     /** @var string[] */
     public array $relationsArray = [];
 
-    public function __construct(string $key = 'id', string $direction = 'DESC')
+    /**
+     * Set only on an ordering whose key came from the request: the trusted
+     * ordering to apply when that key does not resolve to a declared,
+     * orderable column.
+     */
+    public readonly ?self $fallback;
+
+    public function __construct(string $key = 'id', string $direction = 'DESC', ?self $fallback = null)
     {
         $this->key = $key;
         $this->direction = $direction;
+        $this->fallback = $fallback;
 
         $this->initPropsFromKey();
     }
@@ -32,25 +40,33 @@ final class Ordering
     /**
      * Build an Ordering from a Laravel Request, looking up the configured
      * `ordering` parameter (`ordering[key]`, `ordering[direction]`).
+     *
+     * A key taken from the request is untrusted: {@see \Givanov95\DataTable\DataTable}
+     * only applies it when it matches a declared, orderable column and uses
+     * the default ordering otherwise.
      */
     public static function fromRequest(Request $request, string $defaultKey = 'id', string $defaultDirection = 'DESC'): self
     {
-        $orderingKey = DataTableConfig::getOrderingKey();
-        $values = $request->input($orderingKey, [
-            'key'       => $defaultKey,
-            'direction' => $defaultDirection,
-        ]);
+        $values = $request->input(DataTableConfig::getOrderingKey());
 
         if (! is_array($values)) {
-            $values = [
-                'key'       => $defaultKey,
-                'direction' => $defaultDirection,
-            ];
+            $values = [];
+        }
+
+        $direction = (string) ($values['direction'] ?? $defaultDirection);
+
+        if (! isset($values['key'])) {
+            return new self($defaultKey, $direction);
+        }
+
+        if (! is_string($values['key'])) {
+            return new self($defaultKey, $defaultDirection);
         }
 
         return new self(
-            key: (string) ($values['key'] ?? $defaultKey),
-            direction: (string) ($values['direction'] ?? $defaultDirection),
+            key: $values['key'],
+            direction: $direction,
+            fallback: new self($defaultKey, $defaultDirection),
         );
     }
 

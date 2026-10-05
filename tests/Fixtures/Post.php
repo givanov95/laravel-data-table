@@ -19,6 +19,16 @@ final class Post extends Model
 
     public $timestamps = false;
 
+    public static int $trapCalls = 0;
+
+    /** Side-effect probe: must never be reachable from a request's ordering key. */
+    public function trap(): BelongsTo
+    {
+        self::$trapCalls++;
+
+        return $this->belongsTo(Author::class);
+    }
+
     public function author(): BelongsTo
     {
         return $this->belongsTo(Author::class);

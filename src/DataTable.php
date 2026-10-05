@@ -425,7 +425,9 @@ class DataTable
 
     public function applyOrderByColumns(): self
     {
-        $ordering = $this->getOrdering();
+        $ordering = $this->resolveOrdering($this->getOrdering());
+        $this->setOrdering($ordering);
+
         $builder = $this->getBuilder();
 
         $mainModel = $builder->getModel();
@@ -435,6 +437,16 @@ class DataTable
 
         if ($this->rawOrdering) {
             $builder->orderByRaw($this->rawOrdering->getString());
+            $this->setBuilder($builder);
+
+            return $this;
+        }
+
+        if ($ordering->fallback !== null) {
+            $declaredColumn = $this->findOrderableColumn($ordering->key)
+                ?? throw new InvalidColumnNameException("Invalid ordering column: {$ordering->key}");
+
+            $this->applyDeclaredColumnOrdering($builder, $declaredColumn, $mainTable, $ordering);
             $this->setBuilder($builder);
 
             return $this;
@@ -467,6 +479,71 @@ class DataTable
         $this->setBuilder($builder);
 
         return $this;
+    }
+
+    /**
+     * An ordering taken from the request is only honoured when it points at a
+     * declared, orderable column; anything else falls back to the default
+     * ordering. Orderings set by the developer (`setOrdering(new Ordering(...))`)
+     * are trusted as-is.
+     */
+    private function resolveOrdering(Ordering $ordering): Ordering
+    {
+        if ($ordering->fallback === null || $this->findOrderableColumn($ordering->key) !== null) {
+            return $ordering;
+        }
+
+        return $ordering->fallback;
+    }
+
+    /**
+     * Find the orderable column a request key refers to: the key a column is
+     * registered under, or the full `relation.column` path of a RelationColumn.
+     */
+    private function findOrderableColumn(string $key): ?Column
+    {
+        foreach ($this->columns as $columnKey => $column) {
+            if (! $column->isOrderable()) {
+                continue;
+            }
+
+            if ((string) $columnKey === $key || ($column instanceof RelationColumn && $column->relationPath === $key)) {
+                return $column;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Order by a declared column. The SQL is built from the column definition
+     * (and, for relations, the relation path declared on the RelationColumn),
+     * never from the raw request key.
+     */
+    private function applyDeclaredColumnOrdering(
+        Builder $builder,
+        Column $column,
+        string $mainTable,
+        Ordering $ordering,
+    ): void {
+        if ($column instanceof TranslatableColumn) {
+            $this->orderByTranslatable($builder, $column, $mainTable, $ordering);
+
+            return;
+        }
+
+        if ($column instanceof RelationColumn) {
+            $this->applyRelationOrdering(
+                $builder,
+                explode('.', $column->relationString),
+                $mainTable,
+                new Ordering($column->relationColumn, $ordering->direction),
+            );
+
+            return;
+        }
+
+        $builder->orderBy("{$mainTable}.{$column->getDatabaseColumnName()}", $ordering->direction);
     }
 
     private function qualifyMainSelect(Builder $builder, string $mainTable): void

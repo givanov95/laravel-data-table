@@ -105,6 +105,12 @@ public function index()
 }
 ```
 
+Sorting requested by the client (`ordering[key]`, `ordering[direction]`) is only
+applied to columns registered with `orderable: true` (for a `RelationColumn`, its
+`relation.column` path). Any other key is ignored and the default ordering
+(`id DESC`) is used. An ordering you set yourself with
+`setOrdering(new Ordering(...))` is applied as-is.
+
 `setColumn` accepts both shorthand positional arguments **and** a fully
 constructed `Column` object — pick whichever reads better:
 

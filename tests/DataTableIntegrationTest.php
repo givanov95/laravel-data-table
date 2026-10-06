@@ -106,6 +106,57 @@ final class DataTableIntegrationTest extends TestCase
         $this->assertCount(2, $table->getData());
     }
 
+    /**
+     * @return array<string, array{string, list<string>}>
+     */
+    public static function wildcardSearchProvider(): array
+    {
+        return [
+            'percent is literal'         => ['%', ['Discount 50% off']],
+            'underscore is literal'      => ['_', ['snake_case title']],
+            'percent between digits'     => ['0% o', ['Discount 50% off']],
+            'underscore between letters' => ['e_c', ['snake_case title']],
+            'backslash is literal'       => ['\\', ['C:\\temp\\file']],
+            'wildcards do not combine'   => ['%_', []],
+            'plain text still matches'   => ['red', ['Apples are red', 'Cherries are red']],
+        ];
+    }
+
+    /**
+     * @param  list<string>  $expectedTitles
+     */
+    #[DataProvider('wildcardSearchProvider')]
+    public function testGlobalFilterTreatsLikeWildcardsAsLiterals(string $search, array $expectedTitles): void
+    {
+        TestArticle::create(['title' => 'Discount 50% off', 'author' => 'Dave', 'views' => 40]);
+        TestArticle::create(['title' => 'snake_case title', 'author' => 'Erin', 'views' => 50]);
+        TestArticle::create(['title' => 'snakeXcase title', 'author' => 'Frank', 'views' => 60]);
+        TestArticle::create(['title' => 'C:\\temp\\file', 'author' => 'Grace', 'views' => 70]);
+
+        $request = Request::create('/', 'GET', ['filter' => ['global' => $search]]);
+
+        $table = (new DataTable(TestArticle::query(), $request))
+            ->setColumn('title', 'Title', searchable: true)
+            ->setColumn('author', 'Author', searchable: true)
+            ->process();
+
+        $titles = $table->getData()->pluck('title')->sort()->values()->all();
+        sort($expectedTitles);
+
+        $this->assertSame($expectedTitles, $titles);
+    }
+
+    public function testGlobalFilterStillSearchesNumericColumns(): void
+    {
+        $request = Request::create('/', 'GET', ['filter' => ['global' => '20']]);
+
+        $table = (new DataTable(TestArticle::query(), $request))
+            ->setColumn('views', 'Views', searchable: true)
+            ->process();
+
+        $this->assertSame([20], $table->getData()->pluck('views')->all());
+    }
+
     public function testOrderingByRequest(): void
     {
         $request = Request::create('/', 'GET', [

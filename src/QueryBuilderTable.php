@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Givanov95\DataTable;
 
 use Closure;
+use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
@@ -230,7 +231,7 @@ class QueryBuilderTable
 
         $query->where(function (Builder $sub) use ($searchable, $term): void {
             foreach ($searchable as $column) {
-                $sub->orWhere($column['key'], 'like', "%{$term}%");
+                LikeExpression::apply($sub, $column['key'], $term, 'or');
             }
         });
     }

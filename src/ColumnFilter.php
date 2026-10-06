@@ -8,6 +8,7 @@ use DateTimeZone;
 use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
 use Givanov95\DataTable\Support\DateSqlExpression;
+use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
 
 final class ColumnFilter
@@ -36,17 +37,16 @@ final class ColumnFilter
         $priceColumns = $this->dataTable->getPriceColumns();
         $table = $builder->getModel()->getTable();
 
-        $operator = $column->isExactMatch() ? '=' : 'LIKE';
-        $value = $column->isExactMatch() ? $filterValue : "%{$filterValue}%";
+        $exact = $column->isExactMatch();
 
         if ($dateColumns->has($columnKey)) {
             $this->applyDateFilter($builder, $column, $columnKey, $filterValue, $useOrWhere, $timeZone, $table);
         } elseif ($enumColumns->has($columnKey)) {
             $this->applyEnumFilter($builder, $column, $columnKey, $filterValue, $useOrWhere, $table);
         } elseif ($priceColumns->has($columnKey)) {
-            $this->applyPriceFilter($builder, $columnKey, $value, $operator, $useOrWhere);
+            $this->applyPriceFilter($builder, $columnKey, $filterValue, $exact, $useOrWhere);
         } else {
-            $this->applyDefaultFilter($builder, $column, $columnKey, $value, $operator, $useOrWhere, $table);
+            $this->applyDefaultFilter($builder, $column, $columnKey, $filterValue, $exact, $useOrWhere, $table);
         }
 
         $this->builder = $builder;
@@ -148,39 +148,55 @@ final class ColumnFilter
     private function applyPriceFilter(
         Builder $builder,
         string $columnKey,
-        mixed $value,
-        string $operator,
+        mixed $filterValue,
+        bool $exact,
         bool $useOrWhere,
     ): void {
-        $price = preg_replace('/[^0-9%]/', '', (string) $value);
+        // Digits only, taken from the raw input: a `%` or `_` typed by the user must not reach the pattern.
+        $price = preg_replace('/\D/', '', (string) $filterValue);
 
-        if ($price === '%%' || $price === '') {
+        if ($price === '') {
             return;
         }
 
         $method = $useOrWhere ? 'orWhere' : 'where';
-        $builder->{$method}($columnKey, $operator, $price);
+        $builder->{$method}($columnKey, $exact ? '=' : 'LIKE', $exact ? $price : "%{$price}%");
     }
 
     private function applyDefaultFilter(
         Builder $builder,
         $column,
         string $columnKey,
-        mixed $value,
-        string $operator,
+        mixed $filterValue,
+        bool $exact,
         bool $useOrWhere,
         string $table,
     ): void {
         if ($column instanceof RelationColumn) {
-            $useOrWhere
-                ? $builder->orWhereRelation($column->relationString, $column->relationColumn, $operator, $value)
-                : $builder->whereRelation($column->relationString, $column->relationColumn, $operator, $value);
+            $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
+            $builder->{$method}($column->relationString, function ($query) use ($column, $filterValue, $exact) {
+                $this->whereColumnMatches($query, $column->relationColumn, $filterValue, $exact);
+            });
 
             return;
         }
 
-        $useOrWhere
-            ? $builder->orWhere("{$table}.{$columnKey}", $operator, $value)
-            : $builder->where("{$table}.{$columnKey}", $operator, $value);
+        $this->whereColumnMatches($builder, "{$table}.{$columnKey}", $filterValue, $exact, $useOrWhere ? 'or' : 'and');
+    }
+
+    private function whereColumnMatches(
+        Builder $query,
+        string $column,
+        mixed $filterValue,
+        bool $exact,
+        string $boolean = 'and',
+    ): void {
+        if ($exact) {
+            $query->where($column, '=', $filterValue, $boolean);
+
+            return;
+        }
+
+        LikeExpression::apply($query, $column, (string) $filterValue, $boolean);
     }
 }

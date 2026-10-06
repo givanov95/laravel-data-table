@@ -71,6 +71,41 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame('Apples are red', $payload['data'][0]['title']);
     }
 
+    /**
+     * @return array<string, array{string, list<string>}>
+     */
+    public static function wildcardSearchProvider(): array
+    {
+        return [
+            'percent is literal'       => ['%', ['Discount 50% off']],
+            'underscore is literal'    => ['_', ['snake_case title']],
+            'percent between digits'   => ['0% o', ['Discount 50% off']],
+            'backslash is literal'     => ['\\', ['C:\\temp\\file']],
+            'wildcards do not combine' => ['%_', []],
+            'plain text still matches' => ['red', ['Apples are red', 'Cherries are red']],
+        ];
+    }
+
+    /**
+     * @param  list<string>  $expectedTitles
+     */
+    #[DataProvider('wildcardSearchProvider')]
+    public function testGlobalSearchTreatsLikeWildcardsAsLiterals(string $search, array $expectedTitles): void
+    {
+        QbtArticle::create(['title' => 'Discount 50% off', 'author' => 'Dave']);
+        QbtArticle::create(['title' => 'snake_case title', 'author' => 'Erin']);
+        QbtArticle::create(['title' => 'snakeXcase title', 'author' => 'Frank']);
+        QbtArticle::create(['title' => 'C:\\temp\\file', 'author' => 'Grace']);
+
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => $search]]))->toArray();
+
+        $titles = array_column($payload['data'], 'title');
+        sort($titles);
+        sort($expectedTitles);
+
+        $this->assertSame($expectedTitles, $titles);
+    }
+
     public function testOrderingSortsBySortableColumn(): void
     {
         $request = Request::create('/?ordering[key]=title&ordering[direction]=asc');

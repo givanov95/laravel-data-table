@@ -11,8 +11,22 @@
   throws `InvalidArgumentException` for a value below 1.
 - `DataTableParams::clampPerPage()` — the shared rule both `DataTable` and
   `QueryBuilderTable` use to turn a requested page size into an effective one.
+- `Support\DateSqlExpression` and `Exceptions\UnsupportedDriverException` — date
+  filters now build their SQL for the connection's driver (see Fixed).
 
 ### Fixed
+- Date filters (`setDateColumn`) no longer hardcode MySQL's `` DATE_FORMAT(`t`.`c`) ``,
+  which failed on PostgreSQL and SQLite. The expression now follows the connection
+  driver — `DATE_FORMAT` (`mysql`, `mariadb`), `TO_CHAR` (`pgsql`), `strftime`
+  (`sqlite`) — and identifiers are quoted by the query grammar, so a table prefix
+  is honoured too. On any other driver (e.g. `sqlsrv`) a date filter throws
+  `UnsupportedDriverException` instead of failing with a SQL error. The format is
+  now a bound parameter rather than interpolated into the SQL.
+- A date filter on a `RelationColumn` now queries the related model's real table
+  instead of the snake-cased relation name (`author` instead of `authors`), which
+  made the query fail on every driver.
+- A time filter with seconds (`H:i:s`) is no longer translated to MySQL's
+  `%H:%i:s`, where the trailing `s` was a literal and nothing could match.
 - `perPage` from the request is no longer taken as-is. `?perPage=100000` used to be
   accepted and returned every row at once; it is now cut to `max_per_page`. A value
   that is not a number or is below 1 (empty, text, an array, zero, negative) falls

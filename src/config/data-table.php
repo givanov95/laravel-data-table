@@ -21,8 +21,15 @@ return [
     | Request parameter keys
     |--------------------------------------------------------------------------
     |
-    | The DataTable reads incoming HTTP parameters using these keys. Override
-    | them here if your frontend uses different conventions.
+    | DataTable and QueryBuilderTable read incoming HTTP parameters using these
+    | keys. Override them here if your frontend uses different conventions;
+    | the Vue components bundled with the package send the defaults below.
+    |
+    | `ordering` is the parameter that carries `key` and `direction`
+    | (`ordering[key]`, `ordering[direction]`). `restore_id` is only read by
+    | DataTable. QueryBuilderTable takes the search and trashed keys from
+    | anywhere in the request; when they sit under Spatie's filter parameter
+    | (`filter.search`), that filter is accepted without being applied by Spatie.
     |
     */
     'global_filter' => 'filter.global',

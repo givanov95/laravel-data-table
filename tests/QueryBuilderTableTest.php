@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Spatie\QueryBuilder\Exceptions\InvalidFilterQuery;
 
 final class QueryBuilderTableTest extends TestCase
 {
@@ -125,6 +126,117 @@ final class QueryBuilderTableTest extends TestCase
 
         $this->assertArrayHasKey('data', $payload);
         $this->assertTrue($payload['state']['trashed']);
+    }
+
+    public function testPerPageKeyFollowsTheConfig(): void
+    {
+        Config::set('data-table.per_page', 'pageSize');
+
+        $payload = $this->table(Request::create('/', 'GET', ['pageSize' => 2]))->toArray();
+
+        $this->assertSame(2, $payload['meta']['per_page']);
+        $this->assertCount(2, $payload['data']);
+
+        // The default name is not read any more.
+        $payload = $this->table(Request::create('/', 'GET', ['perPage' => 2]))->toArray();
+
+        $this->assertSame(15, $payload['meta']['per_page']);
+    }
+
+    public function testOrderingKeyFollowsTheConfig(): void
+    {
+        Config::set('data-table.ordering', 'sort');
+
+        $request = Request::create('/', 'GET', ['sort' => ['key' => 'title', 'direction' => 'asc']]);
+        $payload = $this->table($request)->toArray();
+
+        $this->assertSame('Apples are red', $payload['data'][0]['title']);
+        $this->assertSame(['column' => 'title', 'direction' => 'asc'], $payload['state']['sort']);
+
+        // The default name is not read any more: back to the default sort.
+        $request = Request::create('/', 'GET', ['ordering' => ['key' => 'title', 'direction' => 'asc']]);
+        $payload = $this->table($request)->toArray();
+
+        $this->assertSame(['column' => 'id', 'direction' => 'desc'], $payload['state']['sort']);
+    }
+
+    public function testGlobalFilterKeyUnderTheFilterParameterFollowsTheConfig(): void
+    {
+        Config::set('data-table.global_filter', 'filter.search');
+
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['search' => 'Apples']]))->toArray();
+
+        $this->assertCount(1, $payload['data']);
+        $this->assertSame('Apples are red', $payload['data'][0]['title']);
+        $this->assertSame('Apples', $payload['state']['search']);
+    }
+
+    public function testAFlatGlobalFilterKeyFollowsTheConfig(): void
+    {
+        Config::set('data-table.global_filter', 'q');
+
+        $payload = $this->table(Request::create('/', 'GET', ['q' => 'Apples']))->toArray();
+
+        $this->assertCount(1, $payload['data']);
+        $this->assertSame('Apples', $payload['state']['search']);
+    }
+
+    public function testTheDefaultFilterNamesAreIgnoredNotRejectedOnceTheKeysAreChanged(): void
+    {
+        Config::set('data-table.global_filter', 'filter.search');
+        Config::set('data-table.trashed', 'filter.archived');
+
+        // The bundled frontend keeps sending these: they must not turn into a 400.
+        $request = Request::create('/', 'GET', ['filter' => ['global' => 'Apples', 'trashed' => 'true', 'timeZone' => 'UTC']]);
+        $payload = $this->table($request)->toArray();
+
+        $this->assertCount(3, $payload['data']);
+        $this->assertNull($payload['state']['search']);
+        $this->assertFalse($payload['state']['trashed']);
+    }
+
+    public function testTrashedKeyFollowsTheConfig(): void
+    {
+        Config::set('data-table.trashed', 'filter.archived');
+
+        QbtArticle::find(1)->delete();
+
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['archived' => 'true']]))->toArray();
+
+        $this->assertTrue($payload['state']['trashed']);
+        $this->assertSame(3, $payload['meta']['total']);
+
+        $payload = $this->table(Request::create('/'))->toArray();
+
+        $this->assertFalse($payload['state']['trashed']);
+        $this->assertSame(2, $payload['meta']['total']);
+    }
+
+    public function testFilterKeysFollowSpatiesFilterParameterName(): void
+    {
+        Config::set('query-builder.parameters.filter', 'f');
+        Config::set('data-table.global_filter', 'f.search');
+
+        $payload = $this->table(Request::create('/', 'GET', ['f' => ['search' => 'Apples']]))->toArray();
+
+        $this->assertCount(1, $payload['data']);
+        $this->assertSame('Apples', $payload['state']['search']);
+    }
+
+    public function testAnUnknownFilterIsStillRejected(): void
+    {
+        $this->expectException(InvalidFilterQuery::class);
+
+        $this->table(Request::create('/', 'GET', ['filter' => ['bogus' => 'x']]))->toArray();
+    }
+
+    public function testSearchingForTheWordTrueOrFalseIsASearch(): void
+    {
+        QbtArticle::create(['title' => 'True story', 'author' => 'Dave']);
+
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => 'true']]))->toArray();
+
+        $this->assertSame(['True story'], array_column($payload['data'], 'title'));
     }
 
     public function testTransformWhitelistsColumns(): void

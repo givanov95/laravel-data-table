@@ -17,6 +17,19 @@
   with `%`, `_` and `\` in the value matched literally (see Fixed).
 
 ### Fixed
+- `QueryBuilderTable` now reads the per-page, search, trashed and ordering request
+  keys from `config/data-table.php` (`per_page`, `global_filter`, `trashed`,
+  `ordering`) like `DataTable` does, instead of the hardcoded `perPage`,
+  `filter.global`, `filter.trashed` and `ordering.key` / `ordering.direction`. An
+  app that renamed a key used to get it honoured by `DataTable` and ignored here
+  (e.g. `per_page => pageSize` always returned the default page size).
+  The search is applied by the table itself rather than by a Spatie filter, so its
+  key may be any request key, not only one under `filter`; the filters named by the
+  configured keys are accepted so Spatie does not reject them, and the default
+  `filter[global]`, `filter[timeZone]` and `filter[trashed]` are still ignored
+  rather than rejected after a key is changed.
+- Searching `QueryBuilderTable` for the text `true` or `false` is now a search:
+  Spatie turned the value into a boolean, which was ignored.
 - `%`, `_` and `\` typed into the search box are now matched literally. They used to
   reach `LIKE` unescaped and act as wildcards, so searching for `%` returned every
   row and `a_c` also found `abc`. This covers the global search and the column

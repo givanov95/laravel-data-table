@@ -9,6 +9,7 @@ use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use InvalidArgumentException;
 use Spatie\QueryBuilder\AllowedFilter;
 use Spatie\QueryBuilder\QueryBuilder;
@@ -18,10 +19,10 @@ use Spatie\QueryBuilder\QueryBuilder;
  *
  * Reads the query parameters emitted by the `useLaravelDataTable` Vue composable
  * (`filter[global]`, `ordering[key]` / `ordering[direction]`, `filter[trashed]`,
- * `perPage`, `page`) and returns the exact `{ data, meta, columns, state }`
- * payload it expects. Global search OR-s the searchable columns; sorting is
- * restricted to the sortable columns; soft-deleted rows are opt-in through the
- * `trashed` toggle.
+ * `perPage`, `page`; the names come from `config/data-table.php`) and returns the
+ * exact `{ data, meta, columns, state }` payload it expects. Global search OR-s
+ * the searchable columns; sorting is restricted to the sortable columns;
+ * soft-deleted rows are opt-in through the `trashed` toggle.
  *
  * @template TModel of Model
  */
@@ -143,7 +144,7 @@ class QueryBuilderTable
     public function toArray(): array
     {
         $trashed = $this->allowTrashed
-            && filter_var($this->request->input('filter.trashed'), FILTER_VALIDATE_BOOLEAN);
+            && filter_var($this->request->input(DataTableConfig::getTrashedKey()), FILTER_VALIDATE_BOOLEAN);
 
         $eloquent = $this->query;
 
@@ -152,23 +153,16 @@ class QueryBuilderTable
             $eloquent->withTrashed();
         }
 
-        $filters = [
-            AllowedFilter::callback('global', function (Builder $query, mixed $value): void {
-                $this->applyGlobalSearch($query, $value);
-            }),
-            // The composable sends filter[timeZone] with every search (and
-            // filter[trashed] on the archived toggle). Register them so Spatie
-            // does not reject them with InvalidFilterQuery; `trashed` is applied
-            // manually via withTrashed() above, so these callbacks are no-ops.
-            AllowedFilter::callback('timeZone', fn () => null),
-        ];
+        // Applied here rather than in a Spatie filter callback, so the key it is read
+        // from can be any request key (`data-table.global_filter`), not only `filter[...]`.
+        $search = $this->searchTerm();
 
-        if ($this->allowTrashed) {
-            $filters[] = AllowedFilter::callback('trashed', fn () => null);
+        if ($search !== null) {
+            $this->applyGlobalSearch($eloquent, $search);
         }
 
         $builder = QueryBuilder::for($eloquent, $this->request)
-            ->allowedFilters(...$filters);
+            ->allowedFilters(...$this->tolerableFilters());
 
         [$sortKey, $sortDirection] = $this->resolveSort();
 
@@ -241,8 +235,10 @@ class QueryBuilderTable
      */
     private function resolveSort(): array
     {
-        $key = $this->request->input('ordering.key');
-        $direction = strtolower((string) $this->request->input('ordering.direction', 'desc')) === 'asc'
+        $ordering = DataTableConfig::getOrderingKey();
+
+        $key = $this->request->input("{$ordering}.key");
+        $direction = strtolower((string) $this->request->input("{$ordering}.direction", 'desc')) === 'asc'
             ? 'asc'
             : 'desc';
 
@@ -261,7 +257,7 @@ class QueryBuilderTable
     private function resolvePerPage(): int
     {
         return DataTableParams::clampPerPage(
-            $this->request->input('perPage'),
+            $this->request->input(DataTableConfig::getPerPageKey()),
             $this->defaultPerPage,
             $this->maxPerPage ?? DataTableConfig::getMaxPerPage(),
         );
@@ -269,8 +265,50 @@ class QueryBuilderTable
 
     private function searchTerm(): ?string
     {
-        $value = $this->request->input('filter.global');
+        $value = $this->request->input(DataTableConfig::getGlobalFilterKey());
 
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * Spatie rejects a `filter[...]` it was not told about with InvalidFilterQuery,
+     * but the search and the trashed toggle are applied here, not by Spatie, so
+     * every filter the frontend sends is registered as a no-op:
+     *
+     * - `timeZone`, which the composable sends with every search;
+     * - `global` and (when allowed) `trashed`, the default names, so a frontend that
+     *   still sends them after the keys were changed is ignored instead of getting a 400;
+     * - the names of the configured keys, when they live under Spatie's filter parameter.
+     *
+     * @return list<AllowedFilter>
+     */
+    private function tolerableFilters(): array
+    {
+        $names = ['global', 'timeZone', $this->spatieFilterName(DataTableConfig::getGlobalFilterKey())];
+
+        if ($this->allowTrashed) {
+            $names[] = 'trashed';
+            $names[] = $this->spatieFilterName(DataTableConfig::getTrashedKey());
+        }
+
+        return array_map(
+            static fn (string $name): AllowedFilter => AllowedFilter::callback($name, static fn () => null),
+            array_values(array_unique(array_filter($names))),
+        );
+    }
+
+    /**
+     * The Spatie filter a request key refers to (`filter.search` is the filter
+     * `search`), or null when the key is not under Spatie's filter parameter.
+     */
+    private function spatieFilterName(string $requestKey): ?string
+    {
+        $prefix = (string) Config::get('query-builder.parameters.filter', 'filter').'.';
+
+        if (! str_starts_with($requestKey, $prefix)) {
+            return null;
+        }
+
+        return explode('.', substr($requestKey, strlen($prefix)))[0];
     }
 }

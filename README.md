@@ -79,7 +79,11 @@ return [
 ];
 ```
 
-These keys map directly to the HTTP query parameters the frontend sends.
+These keys map directly to the HTTP query parameters the frontend sends, and
+both `DataTable` and `QueryBuilderTable` read them (`restore_id` is only used
+by `DataTable`). `ordering` is the parameter that carries `ordering[key]` and
+`ordering[direction]`. The Vue components bundled with the package send the
+defaults above, so changing a key means pairing it with your own frontend.
 
 The page size read from the request is bounded: anything above `max_per_page`
 is cut to it (so `?perPage=100000` cannot load the whole table), and anything
@@ -167,6 +171,15 @@ $payload = QueryBuilderTable::for(User::query()->with('roles:id,name'), request(
     ])
     ->toArray();
 ```
+
+The request keys (search, `trashed`, ordering and per-page) come from
+`config/data-table.php`, like in `DataTable`. Spatie rejects a `filter[...]` it
+does not know with `InvalidFilterQuery`, so `QueryBuilderTable` accepts the
+filters named by the configured keys when they sit under Spatie's filter
+parameter (`'global_filter' => 'filter.search'` accepts `filter[search]`), and
+keeps tolerating `filter[global]`, `filter[timeZone]` and (with `allowTrashed()`)
+`filter[trashed]`. A search key outside that parameter (`'global_filter' => 'q'`)
+works too.
 
 The page size is bounded by `data-table.max_per_page` (see
 [Configuration](#configuration)); call `->maxPerPage(50)` to override it for a

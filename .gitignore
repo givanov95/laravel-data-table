@@ -4,7 +4,6 @@
 /.idea/
 /.vscode/
 /composer.lock
-/package-lock.json
 /.DS_Store
 /.phpunit.cache/
 .claude/settings.local.json

@@ -112,13 +112,14 @@ final class DataTableIntegrationTest extends TestCase
     public static function wildcardSearchProvider(): array
     {
         return [
-            'percent is literal'         => ['%', ['Discount 50% off']],
-            'underscore is literal'      => ['_', ['snake_case title']],
-            'percent between digits'     => ['0% o', ['Discount 50% off']],
-            'underscore between letters' => ['e_c', ['snake_case title']],
-            'backslash is literal'       => ['\\', ['C:\\temp\\file']],
-            'wildcards do not combine'   => ['%_', []],
-            'plain text still matches'   => ['red', ['Apples are red', 'Cherries are red']],
+            'percent is literal'          => ['%', ['Discount 50% off']],
+            'underscore is literal'       => ['_', ['snake_case title']],
+            'percent between digits'      => ['0% o', ['Discount 50% off']],
+            'underscore between letters'  => ['e_c', ['snake_case title']],
+            'backslash is literal'        => ['\\', ['C:\\temp\\file']],
+            'escape character is literal' => ['!', ['Wow! deal']],
+            'wildcards do not combine'    => ['%_', []],
+            'plain text still matches'    => ['red', ['Apples are red', 'Cherries are red']],
         ];
     }
 
@@ -132,6 +133,7 @@ final class DataTableIntegrationTest extends TestCase
         TestArticle::create(['title' => 'snake_case title', 'author' => 'Erin', 'views' => 50]);
         TestArticle::create(['title' => 'snakeXcase title', 'author' => 'Frank', 'views' => 60]);
         TestArticle::create(['title' => 'C:\\temp\\file', 'author' => 'Grace', 'views' => 70]);
+        TestArticle::create(['title' => 'Wow! deal', 'author' => 'Heidi', 'views' => 80]);
 
         $request = Request::create('/', 'GET', ['filter' => ['global' => $search]]);
 
@@ -144,6 +146,17 @@ final class DataTableIntegrationTest extends TestCase
         sort($expectedTitles);
 
         $this->assertSame($expectedTitles, $titles);
+    }
+
+    public function testGlobalFilterIgnoresCaseOnEveryDriver(): void
+    {
+        $request = Request::create('/', 'GET', ['filter' => ['global' => 'aPPLES ARE']]);
+
+        $table = (new DataTable(TestArticle::query(), $request))
+            ->setColumn('title', 'Title', searchable: true)
+            ->process();
+
+        $this->assertSame(['Apples are red'], $table->getData()->pluck('title')->all());
     }
 
     public function testGlobalFilterStillSearchesNumericColumns(): void

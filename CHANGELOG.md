@@ -14,7 +14,7 @@
 - `Support\DateSqlExpression` and `Exceptions\UnsupportedDriverException` — date
   filters now build their SQL for the connection's driver (see Fixed).
 - `Support\LikeExpression` — the "contains" match the search and column filters use,
-  with `%`, `_` and `\` in the value matched literally (see Fixed).
+  with `%` and `_` in the value matched literally (see Fixed).
 
 ### Fixed
 - The per-page select of `Pagination.vue` now shows the page size the server applied
@@ -23,7 +23,9 @@
   choosing 250 used to return 100 rows (cut to `max_per_page`) while the select kept
   showing 250; it now falls back to the "Default" entry. That entry's label carries
   the applied size when no option matches it (`Default (15)`, `Default (100)`), so
-  it reads `Default (15)` where it used to read `Default`.
+  it reads `Default (15)` where it used to read `Default`. After a failed or cancelled
+  reload the select goes back to the size the table still shows (and the reload no
+  longer leaves an unhandled promise rejection).
 - `QueryBuilderTable` now reads the per-page, search, trashed and ordering request
   keys from `config/data-table.php` (`per_page`, `global_filter`, `trashed`,
   `ordering`) like `DataTable` does, instead of the hardcoded `perPage`,
@@ -37,16 +39,25 @@
   rather than rejected after a key is changed.
 - Searching `QueryBuilderTable` for the text `true` or `false` is now a search:
   Spatie turned the value into a boolean, which was ignored.
-- `%`, `_` and `\` typed into the search box are now matched literally. They used to
+- `%` and `_` typed into the search box are now matched literally. They used to
   reach `LIKE` unescaped and act as wildcards, so searching for `%` returned every
   row and `a_c` also found `abc`. This covers the global search and the column
   filters of `DataTable` (plain, `RelationColumn` and `TranslatableColumn` columns)
   and the global search of `QueryBuilderTable`. The pattern is a bound parameter and
-  the `ESCAPE` clause follows the connection driver: MySQL/MariaDB and PostgreSQL
-  already escape with a backslash, other drivers (SQLite, SQL Server) get an
-  explicit `ESCAPE '\'`.
+  the escape character is `!` with an explicit `ESCAPE '!'` on every driver. A
+  backslash was not an option: MySQL stops using it as the `LIKE` escape character
+  under `NO_BACKSLASH_ESCAPES`, where `_` would be a wildcard again. A backslash typed
+  into the search is an ordinary character.
 - A price column (`setPriceColumn`) filter is built from the digits of the raw input
   only. A `%` in it used to survive and act as a wildcard (`1%9` also found `100.9`).
+- `QueryBuilderTable::toArray()` works on a copy of the query it was given. Spatie
+  sorts and paginates the builder it receives, so the caller's builder used to come
+  back with the search, the ordering and the page limit applied, and a second call
+  piled them up again.
+- `restore_id[]=x` is no longer read as `1`, which restored the row with id 1; the
+  restore id must be a whole number. An array in the search (`?filter[global][]=a`)
+  or the trashed toggle no longer fails with a `TypeError` (a 500): it counts as
+  missing, like any other value that is not text.
 - Date filters (`setDateColumn`) no longer hardcode MySQL's `` DATE_FORMAT(`t`.`c`) ``,
   which failed on PostgreSQL and SQLite. The expression now follows the connection
   driver — `DATE_FORMAT` (`mysql`, `mariadb`), `TO_CHAR` (`pgsql`), `strftime`
@@ -69,11 +80,15 @@
 - `?perPage[]=x` is no longer read as `1`; arrays count as "not a number".
 
 ### Changed
-- Requirements are now stated as they really were: PHP `^8.3` (was `^8.4`) and
+- The search on PostgreSQL ignores case, as it already did on MySQL and SQLite
+  (their default collations): `apples` finds `Apples`. It used `LIKE`, which is
+  case-sensitive there, and now uses `ILIKE`.
+- Requirements are now stated as they really are: PHP `^8.3` (was `^8.4`) and
   `illuminate/*` `^12.0|^13.0` (was `^10.0|^11.0|^12.0|^13.0`). Laravel 10 and 11
-  could not be installed anyway, because `spatie/laravel-query-builder ^7.3` needs
-  Laravel 12+. Nothing in the package needs PHP 8.4. CI now runs PHP 8.3, 8.4 and
-  8.5 against Laravel 12 and 13.
+  stopped being installable with v3.2.0, which added `spatie/laravel-query-builder
+  ^7.3` (it needs Laravel 12+); apps on them keep resolving to v3.1.0. Nothing in
+  the package needs PHP 8.4. CI now runs PHP 8.3, 8.4 and 8.5 against Laravel 12 and
+  13, and the whole suite on MySQL 8.4 and PostgreSQL 17.
 - Requests asking for more than `max_per_page` rows per page now get `max_per_page`
   rows. Applications whose `perPageOptions` go above 100 must raise `max_per_page`.
 - `?perPage=-1` (and `0`) no longer mean "all rows": Laravel's `limit()` ignored a

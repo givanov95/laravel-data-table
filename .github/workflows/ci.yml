@@ -38,6 +38,64 @@ jobs:
       - name: Run tests
         run: composer test
 
+  # Същият набор на реален сървър. SQLite не хваща разликите между двигателите:
+  # регистъра при LIKE, sql_mode на MySQL, TO_CHAR / DATE_FORMAT за датите.
+  database:
+    name: ${{ matrix.database }} (PHP 8.4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - database: mysql
+            port: 3306
+            username: root
+            password: ''
+          - database: pgsql
+            port: 5432
+            username: postgres
+            password: postgres
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: testing
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DT_DB: ${{ matrix.database }}
+      DT_DB_HOST: 127.0.0.1
+      DT_DB_PORT: ${{ matrix.port }}
+      DT_DB_DATABASE: testing
+      DT_DB_USERNAME: ${{ matrix.username }}
+      DT_DB_PASSWORD: ${{ matrix.password }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests on ${{ matrix.database }}
+        run: composer test
+
   lint:
     name: PHP CS Fixer
     runs-on: ubuntu-latest

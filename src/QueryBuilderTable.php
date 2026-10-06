@@ -146,7 +146,9 @@ class QueryBuilderTable
         $trashed = $this->allowTrashed
             && filter_var($this->request->input(DataTableConfig::getTrashedKey()), FILTER_VALIDATE_BOOLEAN);
 
-        $eloquent = $this->query;
+        // Spatie sorts and paginates the very builder it is given, so work on a copy: the
+        // caller's builder stays as it was, and toArray() can be called again.
+        $eloquent = clone $this->query;
 
         if ($trashed) {
             // @phpstan-ignore-next-line — withTrashed() is provided by the SoftDeletes scope.

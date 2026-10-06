@@ -24,15 +24,16 @@ final class LikeExpressionTest extends TestCase
     public static function dialects(): array
     {
         return [
-            // Backslash is already the escape character here; a literal ESCAPE '\' would be an
-            // unterminated string in MySQL.
-            'mysql'   => ['mysql', '`posts`.`title` LIKE ?'],
-            'mariadb' => ['mariadb', '`posts`.`title` LIKE ?'],
-            // Same ::text cast the grammar adds to a LIKE, so numeric columns stay searchable.
-            'pgsql' => ['pgsql', '"posts"."title"::text LIKE ?'],
-            // No default escape character.
-            'sqlite' => ['sqlite', '"posts"."title" LIKE ? ESCAPE \'\\\''],
-            'sqlsrv' => ['sqlsrv', '[posts].[title] LIKE ? ESCAPE \'\\\''],
+            // The same escape character everywhere. A backslash would not do: MySQL stops
+            // treating it as the LIKE escape under NO_BACKSLASH_ESCAPES, and a literal
+            // ESCAPE '\' is an unterminated string there otherwise.
+            'mysql'   => ['mysql', '`posts`.`title` LIKE ? ESCAPE \'!\''],
+            'mariadb' => ['mariadb', '`posts`.`title` LIKE ? ESCAPE \'!\''],
+            'sqlite'  => ['sqlite', '"posts"."title" LIKE ? ESCAPE \'!\''],
+            'sqlsrv'  => ['sqlsrv', '[posts].[title] LIKE ? ESCAPE \'!\''],
+            // PostgreSQL's LIKE is case-sensitive, unlike the other drivers', hence ILIKE; the
+            // ::text cast is the one the grammar adds to a LIKE, so numeric columns stay searchable.
+            'pgsql' => ['pgsql', '"posts"."title"::text ILIKE ? ESCAPE \'!\''],
         ];
     }
 
@@ -50,13 +51,14 @@ final class LikeExpressionTest extends TestCase
     {
         return [
             'plain text'         => ['abc', '%abc%'],
-            'percent'            => ['50%', '%50\\%%'],
-            'underscore'         => ['a_b', '%a\\_b%'],
-            'backslash'          => ['C:\\dir', '%C:\\\\dir%'],
-            'all three'          => ['%_\\', '%\\%\\_\\\\%'],
-            'only a percent'     => ['%', '%\\%%'],
-            'escape comes first' => ['\\%', '%\\\\\\%%'],
-            'multibyte'          => ['Здравей_свят', '%Здравей\\_свят%'],
+            'percent'            => ['50%', '%50!%%'],
+            'underscore'         => ['a_b', '%a!_b%'],
+            'escape character'   => ['wow!', '%wow!!%'],
+            'backslash'          => ['C:\\dir', '%C:\\dir%'],
+            'all three'          => ['%_!', '%!%!_!!%'],
+            'only a percent'     => ['%', '%!%%'],
+            'escape comes first' => ['!%', '%!!!%%'],
+            'multibyte'          => ['Здравей_свят', '%Здравей!_свят%'],
         ];
     }
 
@@ -70,21 +72,21 @@ final class LikeExpressionTest extends TestCase
 
     public function testEscapeIsUsableOnItsOwn(): void
     {
-        $this->assertSame('100\\%\\_\\\\', LikeExpression::escape('100%_\\'));
+        $this->assertSame('100!%!_!!', LikeExpression::escape('100%_!'));
     }
 
     public function testQuotesIdentifiersThroughTheGrammarAndAppliesTheTablePrefix(): void
     {
         $expression = LikeExpression::contains(self::connection('mysql', prefix: 'app_'), 'posts.title', 'abc');
 
-        $this->assertSame('`app_posts`.`title` LIKE ?', $expression->sql);
+        $this->assertSame('`app_posts`.`title` LIKE ? ESCAPE \'!\'', $expression->sql);
     }
 
     public function testAnIdentifierCannotBreakOutOfItsQuotes(): void
     {
         $expression = LikeExpression::contains(self::connection('mysql'), 'posts.title`) OR 1=1 -- ', 'abc');
 
-        $this->assertSame('`posts`.`title``) OR 1=1 -- ` LIKE ?', $expression->sql);
+        $this->assertSame('`posts`.`title``) OR 1=1 -- ` LIKE ? ESCAPE \'!\'', $expression->sql);
     }
 
     public function testTheValueIsNeverPartOfTheSql(): void

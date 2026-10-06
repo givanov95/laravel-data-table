@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Givanov95\DataTable\Tests;
 
 use Givanov95\DataTable\QueryBuilderTable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Schema\Blueprint;
@@ -37,7 +38,12 @@ final class QueryBuilderTableTest extends TestCase
 
     private function table(Request $request): QueryBuilderTable
     {
-        return QueryBuilderTable::for(QbtArticle::query(), $request)
+        return $this->tableFor(QbtArticle::query(), $request);
+    }
+
+    private function tableFor(Builder $query, Request $request): QueryBuilderTable
+    {
+        return QueryBuilderTable::for($query, $request)
             ->columns([
                 ['key' => 'id', 'label' => '#', 'sortable' => true],
                 ['key' => 'title', 'label' => 'Title', 'sortable' => true, 'searchable' => true],
@@ -78,12 +84,13 @@ final class QueryBuilderTableTest extends TestCase
     public static function wildcardSearchProvider(): array
     {
         return [
-            'percent is literal'       => ['%', ['Discount 50% off']],
-            'underscore is literal'    => ['_', ['snake_case title']],
-            'percent between digits'   => ['0% o', ['Discount 50% off']],
-            'backslash is literal'     => ['\\', ['C:\\temp\\file']],
-            'wildcards do not combine' => ['%_', []],
-            'plain text still matches' => ['red', ['Apples are red', 'Cherries are red']],
+            'percent is literal'          => ['%', ['Discount 50% off']],
+            'underscore is literal'       => ['_', ['snake_case title']],
+            'percent between digits'      => ['0% o', ['Discount 50% off']],
+            'backslash is literal'        => ['\\', ['C:\\temp\\file']],
+            'escape character is literal' => ['!', ['Wow! deal']],
+            'wildcards do not combine'    => ['%_', []],
+            'plain text still matches'    => ['red', ['Apples are red', 'Cherries are red']],
         ];
     }
 
@@ -97,6 +104,7 @@ final class QueryBuilderTableTest extends TestCase
         QbtArticle::create(['title' => 'snake_case title', 'author' => 'Erin']);
         QbtArticle::create(['title' => 'snakeXcase title', 'author' => 'Frank']);
         QbtArticle::create(['title' => 'C:\\temp\\file', 'author' => 'Grace']);
+        QbtArticle::create(['title' => 'Wow! deal', 'author' => 'Heidi']);
 
         $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => $search]]))->toArray();
 
@@ -105,6 +113,32 @@ final class QueryBuilderTableTest extends TestCase
         sort($expectedTitles);
 
         $this->assertSame($expectedTitles, $titles);
+    }
+
+    public function testGlobalSearchIgnoresCaseOnEveryDriver(): void
+    {
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => 'aPPLES ARE']]))->toArray();
+
+        $this->assertSame(['Apples are red'], array_column($payload['data'], 'title'));
+    }
+
+    public function testToArrayLeavesTheCallersBuilderAlone(): void
+    {
+        $query = QbtArticle::query();
+        $before = $query->toSql();
+
+        $request = Request::create('/', 'GET', ['filter' => ['global' => 'Apples'], 'perPage' => 2]);
+        $this->tableFor($query, $request)->toArray();
+
+        // Neither the search, nor the sorting, nor the page limit leaks into it.
+        $this->assertSame($before, $query->toSql());
+    }
+
+    public function testToArrayCanBeCalledTwiceWithTheSameResult(): void
+    {
+        $table = $this->table(Request::create('/', 'GET', ['filter' => ['global' => 'red']]));
+
+        $this->assertSame($table->toArray(), $table->toArray());
     }
 
     public function testOrderingSortsBySortableColumn(): void

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mount, type VueWrapper } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 
 import Pagination from "../../resources/js/components/Pagination.vue";
@@ -36,6 +36,12 @@ const mountPagination = (perPage: number, perPageOptions: number[] | null = OPTI
 
 const select = (wrapper: VueWrapper) => wrapper.find("select").element as HTMLSelectElement;
 
+/**
+ * Finishes the pending reload the way Inertia does: after the response's props
+ * are in place (or without any, when the request failed or was cancelled).
+ */
+const finishReload = () => (reload.mock.lastCall![0] as { onFinish?: () => void }).onFinish?.();
+
 /** The option the select currently shows, as the user sees it. */
 const shown = (wrapper: VueWrapper) => {
     const el = select(wrapper);
@@ -47,7 +53,7 @@ describe("Pagination per-page select", () => {
     beforeEach(() => {
         resetConfig();
         reload.mockReset();
-        reload.mockImplementation((options: { onSuccess?: () => void }) => options.onSuccess?.());
+        reload.mockImplementation(() => undefined);
     });
 
     it("shows the page size the server applied on first render", () => {
@@ -107,6 +113,30 @@ describe("Pagination per-page select", () => {
         await nextTick();
 
         expect(shown(wrapper)).toBe("Default (100)");
+    });
+
+    it("goes back to what the table shows when the reload fails", async () => {
+        const wrapper = mountPagination(15);
+
+        await wrapper.find("select").setValue("250");
+        expect(shown(wrapper)).toBe("250");
+
+        // No new paginator: the request failed or was cancelled, so nothing changed.
+        finishReload();
+        await flushPromises();
+
+        expect(shown(wrapper)).toBe("Default (15)");
+    });
+
+    it("stays on the new size once the reload has finished", async () => {
+        const wrapper = mountPagination(15);
+
+        await wrapper.find("select").setValue("50");
+        await wrapper.setProps({ paginator: paginator(50) });
+        finishReload();
+        await flushPromises();
+
+        expect(shown(wrapper)).toBe("50");
     });
 
     it("follows the paginator when the page size changes on its own", async () => {

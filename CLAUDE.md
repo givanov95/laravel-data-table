@@ -13,6 +13,7 @@ PHP 8.3+ / Laravel 12–13 backend пакет (`givanov95/laravel-data-table`) +
 
 ## Build и commit-и
 - Няма build стъпка. Тестове: `composer test` (PHPUnit) за backend, `npm test` (Vitest) и `npm run typecheck` за frontend.
+- По подразбиране PHPUnit върви на SQLite в паметта. `DT_DB=mysql` или `DT_DB=pgsql` (с `DT_DB_HOST`/`PORT`/`DATABASE`/`USERNAME`/`PASSWORD`) пуска същите тестове на реален сървър, като след всеки тест **трие всички таблици в базата** — ползвай празна, отделна база. CI върви така на MySQL 8.4 и PostgreSQL 17. Двигателите се различават (регистър при LIKE, `sql_mode` на MySQL, функциите за дати), затова промяна по търсенето или датите се проверява и на тях, не само на SQLite. `tests/MysqlSqlModeTest.php` се пропуска без `DT_DB=mysql`.
 - Pre-commit hook от `givanov95/laravel-git-hooks`: php-cs-fixer, debug-statement guard, тестове. Прескачане: `SKIP_HOOK=1` или частично `SKIP_CSFIXER=1` / `SKIP_TESTS=1`.
 - Commit стил: Conventional Commits на английски (`fix(scope): ...`).
 

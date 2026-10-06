@@ -14,8 +14,6 @@ final class DateTimeHelper
 
     public ?string $convertedDate = null;
 
-    public ?string $sqlFormat = null;
-
     public function __construct(
         public DateColumn $dateColumn,
         private DateTimeZone $clientTimeZone,
@@ -31,7 +29,6 @@ final class DateTimeHelper
             $this->dateColumn->dateDelimiter,
             $this->dateColumn->timeDelimiter,
         );
-        $this->sqlFormat = $this->toSqlFormat();
 
         $dateTime = DateTime::createFromFormat($this->format, $this->dateTimeString, $this->clientTimeZone);
 
@@ -60,10 +57,5 @@ final class DateTimeHelper
         }
 
         return 'H:i';
-    }
-
-    private function toSqlFormat(): string
-    {
-        return str_replace(['d', 'm', 'Y', 'H:i'], ['%d', '%m', '%Y', '%H:%i'], $this->format);
     }
 }

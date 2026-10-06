@@ -26,18 +26,28 @@ final class DataTableParams
      */
     public static function fromRequest(Request $request): self
     {
-        $restoreRaw = $request->input(DataTableConfig::getRestoreIdKey());
+        // A whole number or nothing: `(int) ['x']` would be 1, the id of a real row.
+        $restoreId = filter_var($request->input(DataTableConfig::getRestoreIdKey()), FILTER_VALIDATE_INT);
 
         return new self(
-            globalFilter: $request->input(DataTableConfig::getGlobalFilterKey()),
+            globalFilter: self::scalarToString($request->input(DataTableConfig::getGlobalFilterKey())),
             perPage: self::clampPerPage(
                 $request->input(DataTableConfig::getPerPageKey()),
                 DataTableConfig::getDefaultPerPage(),
                 DataTableConfig::getMaxPerPage(),
             ),
-            trashed: $request->input(DataTableConfig::getTrashedKey()),
-            restoreId: $restoreRaw !== null ? (int) $restoreRaw : null,
+            trashed: self::scalarToString($request->input(DataTableConfig::getTrashedKey())),
+            restoreId: $restoreId === false ? null : $restoreId,
         );
+    }
+
+    /**
+     * A value taken from untrusted input as text. An array (`?filter[global][]=a`)
+     * is not text: it counts as missing instead of failing the typed constructor.
+     */
+    private static function scalarToString(mixed $value): ?string
+    {
+        return is_scalar($value) ? (string) $value : null;
     }
 
     /**

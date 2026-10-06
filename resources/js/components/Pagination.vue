@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link, router } from "@inertiajs/vue3";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import { t } from "../config";
 import type { Paginator } from "../types";
@@ -41,14 +41,20 @@ watch([() => props.paginator, () => props.perPageOptions], () => {
 });
 
 const handlePerPageItems = async () => {
-    await new Promise((resolve, reject) => {
+    // `onFinish` follows a success, a failure and a cancellation alike.
+    await new Promise<void>((resolve) => {
         router.reload({
             data: { perPage: selectedPerPageOption.value },
             only: [props.propName],
-            onSuccess: resolve,
-            onError: reject,
+            onFinish: () => resolve(),
         });
     });
+
+    // After a success the watcher above has already done this. After a failure or a
+    // cancellation no new paginator came, so the select would stay on the size that
+    // was asked for while the table still shows the old one.
+    await nextTick();
+    selectedPerPageOption.value = appliedOption.value;
 };
 </script>
 

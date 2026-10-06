@@ -16,7 +16,7 @@ you write your table definition once in PHP and the Vue component renders it.
 
 ## Installation
 
-### Backend (Laravel / PHP 8.4+)
+### Backend (Laravel 12–13 / PHP 8.3+)
 
 ```bash
 composer require givanov95/laravel-data-table

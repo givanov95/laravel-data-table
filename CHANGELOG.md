@@ -49,6 +49,11 @@
 - `?perPage[]=x` is no longer read as `1`; arrays count as "not a number".
 
 ### Changed
+- Requirements are now stated as they really were: PHP `^8.3` (was `^8.4`) and
+  `illuminate/*` `^12.0|^13.0` (was `^10.0|^11.0|^12.0|^13.0`). Laravel 10 and 11
+  could not be installed anyway, because `spatie/laravel-query-builder ^7.3` needs
+  Laravel 12+. Nothing in the package needs PHP 8.4. CI now runs PHP 8.3, 8.4 and
+  8.5 against Laravel 12 and 13.
 - Requests asking for more than `max_per_page` rows per page now get `max_per_page`
   rows. Applications whose `perPageOptions` go above 100 must raise `max_per_page`.
 - `?perPage=-1` (and `0`) no longer mean "all rows": Laravel's `limit()` ignored a

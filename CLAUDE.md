@@ -1,6 +1,6 @@
 # laravel-data-table — server-side DataTable builder за Laravel с Vue 3 + Inertia frontend
 
-PHP 8.4+ / Laravel 10–13 backend пакет (`givanov95/laravel-data-table`) + Vue 3 / TypeScript frontend пакет (`@givanov95/vue-data-table`) в едно repo. Комуникация с потребителя: български. Код, commit-и и PR-и: английски.
+PHP 8.3+ / Laravel 12–13 backend пакет (`givanov95/laravel-data-table`) + Vue 3 / TypeScript frontend пакет (`@givanov95/vue-data-table`) в едно repo. Комуникация с потребителя: български. Код, commit-и и PR-и: английски.
 
 Работният флоу (issue-та, PR-и) идва от плъгина `gws@claude-flow` — `/gws:issue <N>`. Този файл носи само спецификите на проекта.
 

@@ -7,6 +7,7 @@ namespace Givanov95\DataTable;
 use DateTimeZone;
 use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
+use Givanov95\DataTable\Support\DateSqlExpression;
 use Illuminate\Database\Eloquent\Builder;
 
 final class ColumnFilter
@@ -83,19 +84,35 @@ final class ColumnFilter
 
         if ($column instanceof RelationColumn) {
             $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
-            $builder->{$method}($column->relationString, fn ($query) => $query->whereRaw(
-                "DATE_FORMAT(`{$column->targetTable}`.`{$column->relationColumn}`, '{$helper->sqlFormat}') {$operator} ?",
-                [$value],
-            ));
+            $builder->{$method}($column->relationString, function ($query) use ($column, $helper, $operator, $value) {
+                $this->whereDateFormatted(
+                    $query,
+                    $query->getModel()->getTable().'.'.$column->relationColumn,
+                    $helper->format,
+                    $operator,
+                    $value,
+                );
+            });
 
             return;
         }
 
         $method = $useOrWhere ? 'orWhere' : 'where';
-        $builder->{$method}(fn ($query) => $query->whereRaw(
-            "DATE_FORMAT(`{$table}`.`{$columnKey}`, '{$helper->sqlFormat}') {$operator} ?",
-            [$value],
-        ));
+        $builder->{$method}(function ($query) use ($table, $columnKey, $helper, $operator, $value) {
+            $this->whereDateFormatted($query, "{$table}.{$columnKey}", $helper->format, $operator, $value);
+        });
+    }
+
+    private function whereDateFormatted(
+        Builder $query,
+        string $column,
+        string $phpFormat,
+        string $operator,
+        string $value,
+    ): void {
+        $expression = DateSqlExpression::make($query->getQuery()->getConnection(), $column, $phpFormat);
+
+        $query->whereRaw("{$expression->sql} {$operator} ?", [$expression->format, $value]);
     }
 
     private function applyEnumFilter(

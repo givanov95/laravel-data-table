@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link, router } from "@inertiajs/vue3";
-import { ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { t } from "../config";
 import type { Paginator } from "../types";
@@ -18,7 +18,27 @@ const props = withDefaults(
     { propName: "dataTable" },
 );
 
-const selectedPerPageOption = ref<number | null>(null);
+/**
+ * The option that matches the page size the server applied. `null` is the
+ * "Default" option: the server's own default, or a size that is not one of the
+ * options (e.g. a requested one cut to `max_per_page`).
+ */
+const appliedOption = computed<number | null>(() =>
+    props.perPageOptions?.includes(props.paginator.perPage) ? props.paginator.perPage : null,
+);
+
+const defaultLabel = computed(() =>
+    appliedOption.value === null ? `${t("Default")} (${props.paginator.perPage})` : t("Default"),
+);
+
+const selectedPerPageOption = ref<number | null>(appliedOption.value);
+
+// Every response brings a new paginator, even when the page size is the one it
+// already had, so the select is put back on what the server applied rather than
+// staying on what the user asked for.
+watch([() => props.paginator, () => props.perPageOptions], () => {
+    selectedPerPageOption.value = appliedOption.value;
+});
 
 const handlePerPageItems = async () => {
     await new Promise((resolve, reject) => {
@@ -63,7 +83,7 @@ const handlePerPageItems = async () => {
                 class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block"
                 @change="handlePerPageItems"
             >
-                <option :value="null">{{ t("Default") }}</option>
+                <option :value="null">{{ defaultLabel }}</option>
                 <option v-for="option in perPageOptions" :key="option" :value="option">
                     {{ option }}
                 </option>

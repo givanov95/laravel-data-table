@@ -17,6 +17,13 @@
   with `%`, `_` and `\` in the value matched literally (see Fixed).
 
 ### Fixed
+- The per-page select of `Pagination.vue` now shows the page size the server applied
+  (`paginator.perPage`) on first render and after every reload, instead of a local
+  value that only followed the user's choice. With `perPageOptions=[25, 50, 250]`,
+  choosing 250 used to return 100 rows (cut to `max_per_page`) while the select kept
+  showing 250; it now falls back to the "Default" entry. That entry's label carries
+  the applied size when no option matches it (`Default (15)`, `Default (100)`), so
+  it reads `Default (15)` where it used to read `Default`.
 - `QueryBuilderTable` now reads the per-page, search, trashed and ordering request
   keys from `config/data-table.php` (`per_page`, `global_filter`, `trashed`,
   `ordering`) like `DataTable` does, instead of the hardcoded `perPage`,

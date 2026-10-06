@@ -89,6 +89,74 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $this->assertSame('Goodbye world', $table->getData()->first()->title);
     }
 
+    public function testRelationColumnGlobalFilterTreatsWildcardsAsLiterals(): void
+    {
+        $promo = Author::create(['name' => 'Half%_Price']);
+        $promoPost = Post::create(['author_id' => $promo->id]);
+
+        $expected = [
+            '%'    => [$promoPost->id],
+            '_'    => [$promoPost->id],
+            'f%_P' => [$promoPost->id],
+            // As a wildcard pattern this would find Alice (an "A", then anything, then an "e").
+            'A%e' => [],
+        ];
+
+        foreach ($expected as $search => $ids) {
+            $request = Request::create('/', 'GET', ['filter' => ['global' => (string) $search]]);
+
+            $table = (new DataTable(Post::query(), $request))
+                ->setColumn('id', '#')
+                ->setRelationColumn(new RelationColumn('author.name', 'Author', searchable: true))
+                ->process();
+
+            $this->assertSame($ids, $table->getData()->pluck('id')->all(), "Searching for \"{$search}\"");
+        }
+    }
+
+    public function testTranslatableColumnGlobalFilterTreatsWildcardsAsLiterals(): void
+    {
+        $sale = Post::create(['author_id' => 1]);
+        $sale->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Sale 50% off_final']);
+
+        foreach (['%', '_', '0% o', 'f_f'] as $search) {
+            $request = Request::create('/', 'GET', ['filter' => ['global' => $search]]);
+
+            $table = (new DataTable(Post::query()->with('translations'), $request))
+                ->setColumn('id', '#')
+                ->setTranslatableColumn(new TranslatableColumn(
+                    locale: 'en',
+                    translationKey: 'title',
+                    label: 'Title',
+                    searchable: true,
+                ))
+                ->process();
+
+            $this->assertSame(
+                [$sale->id],
+                $table->getData()->pluck('id')->all(),
+                "Searching for \"{$search}\"",
+            );
+        }
+    }
+
+    public function testPriceColumnFilterIgnoresWildcardsInTheInput(): void
+    {
+        // 100.90 is stored as 100.9: "1%9" would match it as a wildcard pattern
+        // (a 1, then anything, then a 9); read literally the digits are "19".
+        Post::create(['author_id' => 1, 'price' => 100.90]);
+
+        $request = Request::create('/', 'GET', ['filter' => ['global' => '1%9']]);
+
+        $table = (new DataTable(Post::query(), $request))
+            ->setColumn('price', 'Price', searchable: true)
+            ->setPriceColumn('price')
+            ->process();
+
+        $this->assertCount(1, $table->getData());
+        $this->assertEqualsWithDelta(19.99, (float) $table->getData()->first()->price, 0.01);
+    }
+
     public function testEnumColumnFilterMatchesByCaseName(): void
     {
         $request = Request::create('/', 'GET', ['filter' => ['global' => 'approved']]);

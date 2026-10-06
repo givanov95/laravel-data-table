@@ -11,6 +11,7 @@ use Givanov95\DataTable\Columns\PriceColumn;
 use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Columns\TranslatableColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
+use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
@@ -364,8 +365,9 @@ class DataTable
                 if ($column instanceof TranslatableColumn) {
                     $query->orWhereHas('translations', function ($q) use ($column, $searchText) {
                         $q->where('locale', $column->getLocale())
-                            ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey())
-                            ->where('text', 'LIKE', '%'.$searchText.'%');
+                            ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey());
+
+                        LikeExpression::apply($q, 'text', $searchText);
                     });
 
                     continue;
@@ -373,7 +375,7 @@ class DataTable
 
                 if ($column instanceof RelationColumn) {
                     $query->orWhereHas($column->relationString, function ($q) use ($column, $searchText) {
-                        $q->where($column->relationColumn, 'LIKE', '%'.$searchText.'%');
+                        LikeExpression::apply($q, $column->relationColumn, $searchText);
                     });
 
                     continue;

@@ -96,7 +96,10 @@ falls back to `default_per_page`. `default_per_page` is capped by
 - A `max_per_page` below 1 is treated as a misconfiguration and falls back to
   50; it does not turn the bound off.
 - If your frontend offers `perPageOptions` larger than 100, raise
-  `max_per_page` accordingly.
+  `max_per_page` accordingly. An option above `max_per_page` cannot be honoured:
+  the server answers with `max_per_page` rows, and the per-page select shows the
+  page size actually applied (as `Default (100)`, the label of the "Default"
+  entry carrying the number) instead of the option that was chosen.
 - A `DataTableParams` you build and pass to `process()` yourself is used as-is.
 
 ---

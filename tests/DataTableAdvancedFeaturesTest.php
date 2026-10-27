@@ -241,6 +241,55 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $this->assertNull(Post::find(2)->deleted_at);
     }
 
+    public function testSoftRestoreAlsoHonoursTheScopeOfTheProcessCallback(): void
+    {
+        Post::find(3)->delete();
+        \Illuminate\Support\Facades\Gate::policy(Post::class, PostPolicy::class);
+        $request = Request::create('/', 'GET', ['restore_id' => 3, 'filter' => ['trashed' => 'true']]);
+
+        try {
+            (new DataTable(Post::query(), $request))
+                ->setColumn('id', '#')
+                ->process(null, fn ($q) => $q->where('author_id', 1));
+            $this->fail('A record outside the callback scope must not be found.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        }
+
+        $this->assertNotNull(Post::withTrashed()->find(3)->deleted_at);
+    }
+
+    public function testRawOrderingReportsWhatItSaysItAmountsTo(): void
+    {
+        $request = Request::create('/', 'GET', ['ordering' => ['key' => 'id', 'direction' => 'asc']]);
+
+        $plain = (new DataTable(Post::query(), $request))
+            ->setColumn('id', '#', orderable: true)
+            ->setRawOrdering(new RawOrdering('price DESC'))
+            ->process();
+        $this->assertNull($plain->toArray()['state']['sort']);
+
+        $reported = (new DataTable(Post::query(), $request))
+            ->setColumn('price', 'Price', orderable: true)
+            ->setRawOrdering(new RawOrdering('price DESC, id DESC', new \Givanov95\DataTable\Ordering('price', 'DESC')))
+            ->process();
+        $this->assertSame(['column' => 'price', 'direction' => 'desc'], $reported->toArray()['state']['sort']);
+    }
+
+    public function testThePayloadNamesTheRequestKeysOfTheConfig(): void
+    {
+        config(['data-table.per_page' => 'per_page', 'data-table.global_filter' => 'filter.search']);
+
+        $params = (new DataTable(Post::query(), Request::create('/')))->setColumn('id', '#')->process()->toArray()['params'];
+
+        $this->assertSame([
+            'per_page'      => 'per_page',
+            'global_filter' => 'filter.search',
+            'trashed'       => 'filter.trashed',
+            'ordering'      => 'ordering',
+            'restore_id'    => 'restore_id',
+        ], $params);
+    }
+
     public function testRawOrderingWinsOverNormalOrdering(): void
     {
         $request = Request::create('/', 'GET', [

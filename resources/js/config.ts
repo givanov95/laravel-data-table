@@ -57,13 +57,22 @@ export function t(key: string, replacements?: Record<string, unknown>): string {
 }
 
 /**
- * `:name` placeholders filled in, every occurrence and the longest names
- * first (like Laravel), so `:to` does not eat the start of `:total`.
+ * `:name` placeholders filled in, in one pass like Laravel's `strtr`: the
+ * longest names win (`:total` before `:to`) and an inserted value is not
+ * scanned again. Empty names are ignored.
  */
 export function fillPlaceholders(text: string, replacements: Record<string, unknown> = {}): string {
-    return Object.keys(replacements)
-        .sort((a, b) => b.length - a.length)
-        .reduce((result, name) => result.split(`:${name}`).join(String(replacements[name])), text);
+    const names = Object.keys(replacements)
+        .filter((name) => name !== "")
+        .sort((a, b) => b.length - a.length);
+
+    if (names.length === 0) {
+        return text;
+    }
+
+    const pattern = new RegExp(`:(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
+
+    return text.replace(pattern, (_, name: string) => String(replacements[name]));
 }
 
 export function r(...args: unknown[]): unknown {

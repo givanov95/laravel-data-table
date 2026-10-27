@@ -423,7 +423,13 @@ page's own filters), `searchDebounceMs` (1200) and `perPageOptions`
 the server's applied state (`state.sort`, `state.search`, `state.trashed`), so
 back/forward and shared links stay right; a new sort, page size, search or
 archive goes back to page 1. `clearSearch(data)` empties the search box and
-reloads once, together with the page's own filter changes.
+reloads once, together with the page's own filter changes. The request keys
+come from the payload's `params` (`config/data-table.php`), so changing a key
+there needs nothing on the frontend.
+
+A `RawOrdering` hides the sort from `state.sort` (the rows are not in the order
+of a column then); pass what it amounts to when there is one:
+`new RawOrdering('created_at DESC, id DESC', new Ordering('created_at', 'DESC'))`.
 
 `ServerDataTable` props beyond the composable's: `showTrashed`,
 `searchPlaceholder`, `emptyText`, `trashedLabel` and `cellClass` (classes on

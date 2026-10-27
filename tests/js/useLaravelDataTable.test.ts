@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
 
+import { resetConfig, setConfig } from "../../resources/js/config";
 import { useLaravelDataTable } from "../../resources/js/tanstack";
 import type { LaravelDataTablePayload, UseLaravelDataTableOptions } from "../../resources/js/tanstack";
 
-const { reload, replace, page } = vi.hoisted(() => ({
-    reload: vi.fn(),
+const { get, replace, page } = vi.hoisted(() => ({
+    get: vi.fn(),
     replace: vi.fn(),
     page: { url: "/posts" } as { url: string },
 }));
@@ -16,7 +17,7 @@ vi.mock("@inertiajs/vue3", async () => {
     const reactivePage = reactive(page);
 
     return {
-        router: { reload, replace },
+        router: { get, replace },
         usePage: () => reactivePage,
     };
 });
@@ -29,6 +30,7 @@ const payload = (overrides: Partial<LaravelDataTablePayload<Row>> = {}): Laravel
     columns: [
         { key: "id", label: "#", sortable: false, searchable: true },
         { key: "created_at", label: "When", sortable: true, searchable: false },
+        { key: "author.name", label: "Author", sortable: true, searchable: false },
     ],
     state: { search: "", sort: { column: "id", direction: "desc" }, trashed: false },
     ...overrides,
@@ -39,7 +41,7 @@ function setup(initial = payload(), options: UseLaravelDataTableOptions = {}) {
     const data = ref(initial);
     let table!: ReturnType<typeof useLaravelDataTable<Row>>;
 
-    mount(
+    const wrapper = mount(
         defineComponent({
             setup() {
                 table = useLaravelDataTable<Row>(() => data.value, options);
@@ -49,16 +51,23 @@ function setup(initial = payload(), options: UseLaravelDataTableOptions = {}) {
         }),
     );
 
-    return { table, data };
+    return { table, data, wrapper };
 }
 
-const lastReload = () => reload.mock.calls.at(-1)?.[0];
+/** The query of the last visit, decoded (`filter[global]=a`). */
+const lastQuery = (): Record<string, string> => {
+    const url = new URL(String(get.mock.calls.at(-1)?.[0]), "http://localhost");
+
+    return Object.fromEntries(url.searchParams.entries());
+};
+const lastOptions = () => get.mock.calls.at(-1)?.[2];
 
 describe("useLaravelDataTable", () => {
     beforeEach(() => {
         vi.useFakeTimers();
-        reload.mockReset();
+        get.mockReset();
         replace.mockReset();
+        resetConfig();
         page.url = "/posts";
     });
 
@@ -66,28 +75,40 @@ describe("useLaravelDataTable", () => {
         vi.useRealTimers();
     });
 
-    it("shows only a declared sortable column as sorted", () => {
+    it("shows only a declared sortable column as sorted, with TanStack's id", () => {
         // The server's default `id DESC` is not a sortable column: unsorted.
         expect(setup().table.state.sorting).toEqual([]);
+        expect(setup(payload({ state: { sort: null } })).table.state.sorting).toEqual([]);
 
-        const { table } = setup(payload({ state: { sort: { column: "created_at", direction: "desc" } } }));
-        expect(table.state.sorting).toEqual([{ id: "created_at", desc: true }]);
+        const { table } = setup(payload({ state: { sort: { column: "author.name", direction: "asc" } } }));
+        expect(table.state.sorting).toEqual([{ id: "author_name", desc: false }]);
     });
 
-    it("goes back to page 1 on a new sort, page size or archive", () => {
+    it("sends the server's key for a nested column and goes back to page 1", () => {
+        page.url = "/posts?page=3&ordering%5Bkey%5D=id";
         const { table } = setup();
 
-        table.onSortingChange([{ id: "created_at", desc: false }]);
-        expect(lastReload().data).toEqual({ ordering: { key: "created_at", direction: "asc" }, page: 1 });
+        table.onSortingChange([{ id: "author_name", desc: true }]);
+        expect(lastQuery()).toEqual({ page: "1", "ordering[key]": "author.name", "ordering[direction]": "desc" });
+        expect(lastOptions()).toMatchObject({ only: ["dataTable"], preserveState: true, preserveScroll: true });
 
         table.onSortingChange([]);
-        expect(lastReload().data).toEqual({ ordering: undefined, page: 1 });
+        expect(lastQuery()).toEqual({ page: "1" });
+    });
+
+    it("goes back to page 1 on a new page size or archive, keeping the rest of the query", () => {
+        page.url = "/posts?page=3&filter%5Bglobal%5D=al&filter%5BtimeZone%5D=UTC&who=team";
+        const { table } = setup();
 
         table.onPerPageChange(50);
-        expect(lastReload().data).toEqual({ perPage: 50, page: 1 });
+        expect(lastQuery()).toMatchObject({ page: "1", perPage: "50", "filter[global]": "al", who: "team" });
 
         table.onTrashedChange(true);
-        expect(lastReload().data).toEqual({ filter: { trashed: true }, page: 1 });
+        expect(lastQuery()).toMatchObject({ page: "1", "filter[trashed]": "true", "filter[global]": "al" });
+
+        page.url = "/posts?page=2&filter%5Btrashed%5D=true&filter%5Bglobal%5D=al&filter%5BtimeZone%5D=UTC";
+        table.onTrashedChange(false);
+        expect(lastQuery()).toEqual({ page: "1", "filter[global]": "al", "filter[timeZone]": "UTC" });
     });
 
     it("searches once after the debounce, with the time zone, on page 1", async () => {
@@ -98,18 +119,28 @@ describe("useLaravelDataTable", () => {
         table.onGlobalFilterChange("alice");
         await nextTick();
         vi.advanceTimersByTime(299);
-        expect(reload).not.toHaveBeenCalled();
+        expect(get).not.toHaveBeenCalled();
 
         vi.advanceTimersByTime(1);
-        expect(reload).toHaveBeenCalledTimes(1);
-        expect(lastReload().data).toEqual({
-            filter: { global: "alice", timeZone: expect.any(String) },
-            page: 1,
-        });
+        expect(get).toHaveBeenCalledTimes(1);
+        expect(lastQuery()).toEqual({ "filter[global]": "alice", "filter[timeZone]": expect.any(String), page: "1" });
     });
 
-    it("clears the search in one reload with the page's own changes, cancelling a pending one", async () => {
-        const { table } = setup(payload({ state: { search: "alice" } }), { searchDebounceMs: 300 });
+    it("takes the package's reloadDebounceMs by default", async () => {
+        setConfig({ reloadDebounceMs: 400 });
+        const { table } = setup();
+
+        table.onGlobalFilterChange("al");
+        await nextTick();
+        vi.advanceTimersByTime(399);
+        expect(get).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
+        expect(get).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the search in one visit with the page's own changes, cancelling a pending one", async () => {
+        page.url = "/posts?filter%5Bglobal%5D=alice&filter%5BtimeZone%5D=UTC&filter%5Btrashed%5D=true&who=team&page=2";
+        const { table } = setup(payload({ state: { search: "alice", trashed: true } }), { searchDebounceMs: 300 });
 
         table.onGlobalFilterChange("alic");
         await nextTick();
@@ -117,9 +148,41 @@ describe("useLaravelDataTable", () => {
         await nextTick();
         vi.advanceTimersByTime(1000);
 
-        expect(reload).toHaveBeenCalledTimes(1);
-        expect(lastReload().data).toEqual({ who: undefined, filter: undefined, page: 1 });
+        expect(get).toHaveBeenCalledTimes(1);
+        // The search goes, the archive stays.
+        expect(lastQuery()).toEqual({ "filter[trashed]": "true", page: "1" });
         expect(table.state.globalFilter).toBe("");
+    });
+
+    it("does not send a waiting search after the page is left", async () => {
+        const { table, wrapper } = setup(payload(), { searchDebounceMs: 300 });
+
+        table.onGlobalFilterChange("al");
+        await nextTick();
+        wrapper.unmount();
+        vi.advanceTimersByTime(1000);
+
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it("keeps what is typed while an older search finishes", async () => {
+        const { table, data } = setup(payload(), { searchDebounceMs: 300 });
+
+        table.onGlobalFilterChange("abc");
+        await nextTick();
+        vi.advanceTimersByTime(300);
+        const finishAbc = lastOptions().onFinish as () => void;
+
+        table.onGlobalFilterChange("abcd");
+        await nextTick();
+        // The "abc" response arrives while "abcd" waits for its debounce.
+        data.value = payload({ state: { search: "abc" } });
+        finishAbc();
+        await nextTick();
+
+        expect(table.state.globalFilter).toBe("abcd");
+        vi.advanceTimersByTime(300);
+        expect(lastQuery()["filter[global]"]).toBe("abcd");
     });
 
     it("follows the server's search term (back/forward) without searching again", async () => {
@@ -131,7 +194,21 @@ describe("useLaravelDataTable", () => {
         vi.advanceTimersByTime(5000);
 
         expect(table.state.globalFilter).toBe("bob");
-        expect(reload).not.toHaveBeenCalled();
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it("sends the request keys the server names in params", () => {
+        page.url = "/posts?per_page=50";
+        const params = { per_page: "per_page", global_filter: "q.term", trashed: "archived", ordering: "sort", restore_id: "restore" };
+        const { table } = setup(payload({ params }));
+
+        expect(table.perPage).toBe(50);
+
+        table.onSortingChange([{ id: "created_at", desc: false }]);
+        expect(lastQuery()).toMatchObject({ "sort[key]": "created_at", "sort[direction]": "asc" });
+
+        table.onTrashedChange(true);
+        expect(lastQuery()).toMatchObject({ archived: "true" });
     });
 
     it("reloads the payload prop and the props the page asks for", () => {
@@ -139,10 +216,11 @@ describe("useLaravelDataTable", () => {
 
         table.goToPage(2);
 
-        expect(lastReload()).toMatchObject({ data: { page: 2 }, only: ["posts", "filters"] });
+        expect(lastQuery()).toEqual({ page: "2" });
+        expect(lastOptions()).toMatchObject({ only: ["posts", "filters"] });
     });
 
-    it("reads the requested page size from the URL", async () => {
+    it("reads the requested page size from the URL", () => {
         page.url = "/posts?perPage=50&page=2";
         const { table } = setup();
 

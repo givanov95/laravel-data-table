@@ -93,7 +93,6 @@ class DataTable
 
         $this->initRelations();
         $this->applyModelFiltering($params);
-        $this->softRestoreRecord($params);
         $this->applyOrderByColumns();
 
         if ($params->globalFilter !== null && $params->globalFilter !== '') {
@@ -101,6 +100,9 @@ class DataTable
         }
 
         $this->applyCallbackBeforePaginate($callbackBeforePaginate);
+        // After every narrowing of the query (the callback scopes it to a tenant, say),
+        // before the page is read, so the restored record leaves the archive at once.
+        $this->softRestoreRecord($params);
 
         /** @var LengthAwarePaginatorContract $lengthAwarePaginator */
         $lengthAwarePaginator = $this->getBuilder()->paginate($params->perPage);
@@ -343,7 +345,8 @@ class DataTable
         }
 
         // Through the table's own query, so a record outside the list (another
-        // tenant's, say) is a 404 instead of being restored by its id.
+        // tenant's, say, or one the search does not show) is a 404 instead of
+        // being restored by its id.
         $model = (clone $this->getBuilder())
             ->withTrashed()
             ->findOrFail($params->restoreId);
@@ -721,7 +724,8 @@ class DataTable
      *       'data'    => [ ...row... ],
      *       'meta'    => [ current_page, per_page, total, last_page, from, to ],
      *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
-     *       'state'   => [ search, sort => [column, direction], trashed ],
+     *       'state'   => [ search, sort => [column, direction] | null, trashed ],
+     *       'params'  => [ per_page, global_filter, trashed, ordering, restore_id ],   // request keys
      *     ]
      *
      * Call it explicitly (`->process()->toArray()`); the default serialization
@@ -757,12 +761,26 @@ class DataTable
                 ->all(),
             'state' => [
                 'search' => $this->params->globalFilter ?? '',
-                'sort' => [
-                    'column' => $this->ordering->key,
-                    'direction' => strtolower($this->ordering->direction),
-                ],
+                'sort' => $this->appliedSort(),
                 'trashed' => $this->params->trashed === 'true',
             ],
+            'params' => DataTableConfig::requestKeys(),
+        ];
+    }
+
+    /**
+     * The order the rows are in: the ordering, unless a raw ordering replaced it;
+     * then what that raw ordering says it amounts to, if anything.
+     *
+     * @return array{column: string, direction: string}|null
+     */
+    private function appliedSort(): ?array
+    {
+        $ordering = $this->rawOrdering !== null ? $this->rawOrdering->reportedAs : $this->ordering;
+
+        return $ordering === null ? null : [
+            'column' => $ordering->key,
+            'direction' => strtolower($ordering->direction),
         ];
     }
 }

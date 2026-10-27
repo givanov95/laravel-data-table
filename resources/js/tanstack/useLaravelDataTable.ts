@@ -1,8 +1,10 @@
-import type { FormDataConvertible } from "@inertiajs/core";
+import type { VisitOptions } from "@inertiajs/core";
 import { router, usePage } from "@inertiajs/vue3";
 import type { PaginationState, SortingState, Updater } from "@tanstack/vue-table";
-import { computed, reactive, ref, toValue, watch } from "vue";
+import { computed, onScopeDispose, reactive, ref, toValue, watch } from "vue";
 import type { MaybeRefOrGetter } from "vue";
+
+import { getReloadDebounceMs } from "../config";
 
 /**
  * The payload of `DataTable::process()->toArray()`: Laravel paginator naming
@@ -30,6 +32,15 @@ export interface LaravelDataTableState {
     trashed?: boolean;
 }
 
+/** The request keys of the server's config/data-table.php (dotted: `filter.global`). */
+export interface LaravelDataTableParams {
+    per_page: string;
+    global_filter: string;
+    trashed: string;
+    ordering: string;
+    restore_id: string;
+}
+
 export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
     /** One entry per row, as the server serialised it. */
     data: TData[];
@@ -37,22 +48,59 @@ export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
     /** In definition order. */
     columns: LaravelDataTableColumn[];
     state: LaravelDataTableState;
+    /** Sent by v3.4+; the package defaults otherwise. */
+    params?: LaravelDataTableParams;
 }
+
+/** A query value: nested objects become `key[sub]`; empty values remove the key. */
+export type QueryValue = string | number | boolean | null | undefined | { [key: string]: QueryValue };
 
 export interface UseLaravelDataTableOptions {
     /** The Inertia prop that holds the payload; reloaded on every change. */
     propName?: string;
     /** Other props the page wants back on every reload (e.g. its own filters). */
     alsoReload?: string[];
-    /** Wait after the last keystroke before searching. */
+    /** Wait after the last keystroke before searching; default: the package's `reloadDebounceMs` (1200). */
     searchDebounceMs?: number;
     /** Offered by the per-page select (the applied size is always added). */
     perPageOptions?: number[];
 }
 
 const DEFAULT_PROP_NAME = "dataTable";
-const DEFAULT_SEARCH_DEBOUNCE_MS = 1200;
 const DEFAULT_PER_PAGE_OPTIONS = [10, 20, 50, 100];
+const DEFAULT_PARAMS: LaravelDataTableParams = {
+    per_page: "perPage",
+    global_filter: "filter.global",
+    trashed: "filter.trashed",
+    ordering: "ordering",
+    restore_id: "restore_id",
+};
+
+/** `filter.global` → `filter[global]`, the form it has in a query string. */
+const queryKey = (dotted: string): string =>
+    dotted
+        .split(".")
+        .map((part, i) => (i === 0 ? part : `[${part}]`))
+        .join("");
+
+/** TanStack makes a column id from `accessorKey` with dots as underscores. */
+const columnId = (key: string): string => key.split(".").join("_");
+
+function appendQuery(query: URLSearchParams, key: string, value: QueryValue): void {
+    if (value === undefined || value === null || value === "") {
+        return;
+    }
+
+    if (typeof value === "object") {
+        for (const [sub, nested] of Object.entries(value)) {
+            appendQuery(query, `${key}[${sub}]`, nested);
+        }
+
+        return;
+    }
+
+    query.append(key, String(value));
+}
 
 /**
  * Drives a `givanov95/laravel-data-table` payload with TanStack Table in manual
@@ -70,12 +118,27 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
 ) {
     const propName = options.propName ?? DEFAULT_PROP_NAME;
     const only = [propName, ...(options.alsoReload ?? [])];
-    const searchDebounceMs = options.searchDebounceMs ?? DEFAULT_SEARCH_DEBOUNCE_MS;
+    const searchDebounceMs = options.searchDebounceMs ?? getReloadDebounceMs();
     const perPageOptions = options.perPageOptions ?? DEFAULT_PER_PAGE_OPTIONS;
 
     const page = usePage();
     const payload = computed(() => toValue(dataTable));
     const meta = computed(() => payload.value.meta);
+    const params = computed(() => ({ ...DEFAULT_PARAMS, ...payload.value.params }));
+    const keys = computed(() => {
+        const global = queryKey(params.value.global_filter);
+        const parent = params.value.global_filter.split(".").slice(0, -1);
+
+        return {
+            perPage: queryKey(params.value.per_page),
+            global,
+            // Sent next to the search term (date columns are matched in it).
+            timeZone: queryKey([...parent, "timeZone"].join(".")),
+            trashed: queryKey(params.value.trashed),
+            ordering: queryKey(params.value.ordering),
+            restoreId: queryKey(params.value.restore_id),
+        };
+    });
 
     // `page.url` follows every visit, partial reloads included.
     const searchParams = computed(() => {
@@ -101,7 +164,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
             return [];
         }
 
-        return [{ id: sort.column, desc: (sort.direction ?? "desc").toLowerCase() !== "asc" }];
+        return [{ id: columnId(sort.column), desc: (sort.direction ?? "desc").toLowerCase() !== "asc" }];
     });
 
     const pagination = computed<PaginationState>(() => ({
@@ -140,8 +203,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
 
     // The payload has only the applied size; `null` ("the server's default") is
     // a choice of its own, so the requested size is read from the URL.
-    const readPerPage = (): number | null =>
-        searchParams.value.has("perPage") ? Number(searchParams.value.get("perPage")) || null : null;
+    const readPerPage = (): number | null => Number(searchParams.value.get(keys.value.perPage)) || null;
 
     const perPage = ref<number | null>(readPerPage());
 
@@ -149,40 +211,47 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         perPage.value = readPerPage();
     });
 
-    // ----- Reloads ---------------------------------------------------------------
+    // ----- Visits ----------------------------------------------------------------
 
-    // `router.reload` visits the current URL and keeps state and scroll.
-    function reload(data: Record<string, FormDataConvertible>, onFinish?: () => void): void {
-        router.reload({ data, only, onFinish });
+    /**
+     * Visit the current page with these query changes, keeping state and
+     * scroll and reloading only the table's props. The URL is built here, key
+     * by key (`filter[global]`, not a whole `filter` object), so the result
+     * does not depend on how an Inertia version merges data into the query.
+     */
+    function visit(changes: Record<string, QueryValue>, visitOptions: Partial<VisitOptions> = {}): void {
+        const url = new URL(page.url ?? "", window.location.origin);
+        const query = url.searchParams;
+
+        for (const [key, value] of Object.entries(changes)) {
+            for (const existing of [...query.keys()]) {
+                if (existing === key || existing.startsWith(`${key}[`)) {
+                    query.delete(existing);
+                }
+            }
+
+            appendQuery(query, key, value);
+        }
+
+        const search = query.toString();
+
+        router.get(`${url.pathname}${search ? `?${search}` : ""}`, {}, {
+            only,
+            preserveState: true,
+            preserveScroll: true,
+            ...visitOptions,
+        });
     }
 
     function timeZone(): string {
         return Intl.DateTimeFormat().resolvedOptions().timeZone;
     }
 
-    /**
-     * The whole `filter` object: Inertia merges reload data into the query
-     * shallowly, so a `filter` sent replaces the old one and every key to keep
-     * is rebuilt. `undefined` removes `filter[...]` from the URL.
-     */
-    function buildFilter(
-        overrides: { global?: string | null; trashed?: boolean } = {},
-    ): Record<string, FormDataConvertible> | undefined {
-        const rawGlobal = overrides.global !== undefined ? overrides.global : globalFilter.value;
-        const global = rawGlobal && rawGlobal.trim() !== "" ? rawGlobal : null;
-        const isTrashed = overrides.trashed !== undefined ? overrides.trashed : trashed.value;
-        const filter: Record<string, FormDataConvertible> = {};
+    /** The search term and its time zone, or neither. */
+    function searchChanges(term: string): Record<string, QueryValue> {
+        const value = term.trim() !== "" ? term : undefined;
 
-        if (global !== null) {
-            filter.global = global;
-            filter.timeZone = timeZone();
-        }
-
-        if (isTrashed) {
-            filter.trashed = true;
-        }
-
-        return Object.keys(filter).length > 0 ? filter : undefined;
+        return { [keys.value.global]: value, [keys.value.timeZone]: value === undefined ? undefined : timeZone() };
     }
 
     // ----- Sorting ---------------------------------------------------------------
@@ -191,9 +260,14 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         const next = typeof updaterOrValue === "function" ? updaterOrValue(sorting.value) : updaterOrValue;
         const first = next[0];
 
+        // The server's key for the TanStack id (`author.name` for `author_name`).
+        const key = first
+            ? (payload.value.columns.find((c) => columnId(c.key) === first.id)?.key ?? first.id)
+            : undefined;
+
         // Page 1: row N under the old order has nothing to do with row N under the new one.
-        reload({
-            ordering: first ? { key: first.id, direction: first.desc ? "desc" : "asc" } : undefined,
+        visit({
+            [keys.value.ordering]: first ? { key, direction: first.desc ? "desc" : "asc" } : undefined,
             page: 1,
         });
     }
@@ -201,16 +275,29 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
     // ----- Search ------------------------------------------------------------------
 
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
+    // Each search sent gets a number: only the latest one, with nothing
+    // waiting to be sent, ends the "pending" state.
+    let searchSeq = 0;
 
     function cancelSearch(): void {
         clearTimeout(searchTimer);
         searchTimer = undefined;
     }
 
-    function sendSearch(): void {
+    // Leaving the page must not send its search to the next one.
+    onScopeDispose(cancelSearch);
+
+    function sendSearch(changes: Record<string, QueryValue> = {}): void {
         cancelSearch();
-        reload({ filter: buildFilter(), page: 1 }, () => {
-            searchPending = false;
+        searchPending = true;
+        const seq = ++searchSeq;
+
+        visit({ ...changes, ...searchChanges(globalFilter.value), page: 1 }, {
+            onFinish: () => {
+                if (seq === searchSeq && searchTimer === undefined) {
+                    searchPending = false;
+                }
+            },
         });
     }
 
@@ -224,7 +311,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
 
         searchPending = true;
         cancelSearch();
-        searchTimer = setTimeout(sendSearch, searchDebounceMs);
+        searchTimer = setTimeout(() => sendSearch(), searchDebounceMs);
     });
 
     function onGlobalFilterChange(updaterOrValue: Updater<string>): void {
@@ -236,7 +323,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
      * Empty the search box and reload once, at once, with any other query
      * changes of the page (e.g. its own filters), on page 1.
      */
-    function clearSearch(data: Record<string, FormDataConvertible> = {}): void {
+    function clearSearch(data: Record<string, QueryValue> = {}): void {
         cancelSearch();
 
         if (globalFilter.value !== "") {
@@ -244,19 +331,16 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
             globalFilter.value = "";
         }
 
-        searchPending = true;
-        reload({ ...data, filter: buildFilter({ global: null }), page: 1 }, () => {
-            searchPending = false;
-        });
+        sendSearch(data);
     }
 
     // ----- Page size -------------------------------------------------------------
 
     function onPerPageChange(value: number | null): void {
         perPage.value = value;
-        // `null` goes as `perPage=`, which falls back to the server's default.
+        // `null` drops the key: the server's default.
         // Page 1: Laravel does not clamp a page past the end, it returns no rows.
-        reload({ perPage: value, page: 1 });
+        visit({ [keys.value.perPage]: value, page: 1 });
     }
 
     // ----- Archive -----------------------------------------------------------------
@@ -264,26 +348,27 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
     function onTrashedChange(value: boolean): void {
         trashed.value = value;
         // Page 1: the archive is usually much shorter than the live list.
-        reload({ filter: buildFilter({ trashed: value }), page: 1 });
+        visit({ [keys.value.trashed]: value ? "true" : undefined, page: 1 });
     }
 
     function onRestore(id: number): void {
-        router.reload({
-            data: { restore_id: id },
-            only,
-            onSuccess: () => {
-                const url = new URL(window.location.href);
-                url.searchParams.delete("restore_id");
+        visit(
+            { [keys.value.restoreId]: id },
+            {
+                onSuccess: () => {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete(keys.value.restoreId);
 
-                router.replace({ url: url.pathname + url.search, preserveState: true, preserveScroll: true });
+                    router.replace({ url: url.pathname + url.search, preserveState: true, preserveScroll: true });
+                },
             },
-        });
+        );
     }
 
     // ----- Pages -------------------------------------------------------------------
 
     function goToPage(pageNumber: number): void {
-        reload({ page: pageNumber });
+        visit({ page: pageNumber });
     }
 
     function onPaginationChange(updaterOrValue: Updater<PaginationState>): void {

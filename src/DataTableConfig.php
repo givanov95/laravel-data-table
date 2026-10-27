@@ -47,6 +47,23 @@ class DataTableConfig
         return (string) Config::get('data-table.ordering', 'ordering');
     }
 
+    /**
+     * The request keys a frontend has to send (`toArray()`'s `params`), so a
+     * changed key in config/data-table.php reaches the composable too.
+     *
+     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string, restore_id: string}
+     */
+    public static function requestKeys(): array
+    {
+        return [
+            'per_page' => self::getPerPageKey(),
+            'global_filter' => self::getGlobalFilterKey(),
+            'trashed' => self::getTrashedKey(),
+            'ordering' => self::getOrderingKey(),
+            'restore_id' => self::getRestoreIdKey(),
+        ];
+    }
+
     public static function getDefaultPerPage(): int
     {
         return (int) Config::get('data-table.default_per_page', 15);

@@ -82,5 +82,13 @@ describe("config", () => {
         it("replaces every occurrence", () => {
             expect(fillPlaceholders(":n and :n", { n: 2 })).toBe("2 and 2");
         });
+
+        it("does not scan an inserted value again", () => {
+            expect(fillPlaceholders("Results for :term in :to", { term: "a:to", to: 5 })).toBe("Results for a:to in 5");
+        });
+
+        it("ignores an empty name", () => {
+            expect(fillPlaceholders("Showing :from", { "": "x", from: 1 })).toBe("Showing 1");
+        });
     });
 });

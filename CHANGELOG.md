@@ -8,15 +8,28 @@
   state (sort, search, archive), so back/forward and shared links stay right; a new sort, page
   size, search or archive goes back to page 1; `clearSearch(data)` empties the search and
   reloads once with the page's own changes; `alsoReload` refreshes other props with the table.
-  `@tanstack/vue-table` is an optional peer dependency.
+  `@tanstack/vue-table` is an optional peer dependency. It builds the URL of each visit itself,
+  key by key, so it does not depend on how an Inertia version merges data into the query; it
+  sends the request keys the server names in `params` (below); its search debounce defaults to
+  the package's `reloadDebounceMs`, is cancelled when the page is left, and an older search that
+  finishes no longer overwrites what is being typed; a nested column (`author.name`) maps to
+  TanStack's id (`author_name`) and back.
 - `php artisan vendor:publish --tag=data-table-shadcn`: the shadcn-vue UI for it
   (`ServerDataTable`, `DataTable`, `DataTableColumnHeader`, `features.ts`), published into
   `resources/js/components/ui/data-table`. Every text goes through the package's translator
   (English keys, listed in the README), the page buttons and the per-page select have
   accessible names, and `cellClass` sets classes on every body cell.
-- `fillPlaceholders()`: `:name` placeholders filled in, the longest names first.
+- `fillPlaceholders()`: `:name` placeholders filled in one pass, the longest names first (like
+  Laravel's `strtr`).
+- `toArray()` (and `QueryBuilderTable::toArray()`) has `params`: the request keys of
+  `config/data-table.php` (`DataTableConfig::requestKeys()`), so a frontend sends what the server
+  reads.
+- `RawOrdering` takes an optional `Ordering $reportedAs`: what the expression amounts to for
+  `state.sort` (e.g. `created_at DESC, id DESC` → `created_at` DESC).
 
 ### Changed
+- `toArray()`'s `state.sort` is `null` while a raw ordering is applied (unless the raw ordering
+  says what it amounts to): the rows are not in the order of `ordering` then.
 - `DataTablePlugin` is typed with its options (`Plugin<[DataTablePluginOptions?]>`), so
   `app.use(DataTablePlugin, { translator })` infers the translator's parameters. The `vue`
   peer dependency is `^3.3.0` (the first version with typed plugin options).
@@ -24,8 +37,9 @@
   them as they are.
 
 ### Fixed
-- `?restore_id=` looks the record up through the table's own query, so a record outside the
-  list (another tenant's, say) is a 404 instead of being restored by its id.
+- `?restore_id=` looks the record up through the table's own query, after the `process()`
+  callback and the search, so a record outside the list (another tenant's, say) is a 404 instead
+  of being restored by its id.
 
 ## v3.3.0
 

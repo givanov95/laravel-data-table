@@ -11,7 +11,7 @@ import type {
 } from "@tanstack/vue-table"
 import { FlexRender, useTable } from "@tanstack/vue-table"
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "@lucide/vue"
-import { computed } from "vue"
+import { computed, useId } from "vue"
 import type { LaravelDataTableMeta } from "@givanov95/vue-data-table/tanstack"
 import { t } from "@givanov95/vue-data-table/tanstack"
 import { Button } from "@/components/ui/button"
@@ -74,6 +74,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   showTrashed: false,
 })
+
+// One id per table: two archivable lists on a page must not share it.
+const trashedId = `server-data-table-trashed-${useId()}`
 
 const table = useTable({
   features: dataTableFeatures,
@@ -163,11 +166,11 @@ const showTrailingJump = computed(() => currentPage.value + PAGE_RANGE < lastPag
       <div class="ml-auto flex items-center gap-4">
         <div v-if="showTrashed" class="flex items-center gap-2">
           <Switch
-            id="server-data-table-trashed"
+            :id="trashedId"
             :model-value="trashed"
             @update:model-value="onTrashedChange(Boolean($event))"
           />
-          <Label for="server-data-table-trashed" class="text-sm">
+          <Label :for="trashedId" class="text-sm">
             {{ trashedLabel ?? t('Show archived') }}
           </Label>
         </div>

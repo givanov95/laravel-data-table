@@ -55,6 +55,33 @@ final class DataTableIntegrationTest extends TestCase
         $this->assertCount(3, $table->getData());
     }
 
+    public function testAPagePastTheLastOneCountsFromZero(): void
+    {
+        $count = TestArticle::count();
+        $request = Request::create('/', 'GET', ['page' => 5, 'perPage' => 2]);
+        // The paginator reads the page from the app's request.
+        $this->app->instance('request', $request);
+
+        $meta = (new DataTable(TestArticle::query(), $request))
+            ->setColumn('id', '#')
+            ->process()
+            ->toArray()['meta'];
+
+        $this->assertSame($count, $meta['total']);
+        $this->assertSame(0, $meta['from']);
+        $this->assertSame(0, $meta['to']);
+
+        // A normal last page: its own rows.
+        $lastRequest = Request::create('/', 'GET', ['page' => (int) ceil($count / 2), 'perPage' => 2]);
+        $this->app->instance('request', $lastRequest);
+        $last = (new DataTable(TestArticle::query(), $lastRequest))
+            ->setColumn('id', '#')
+            ->process()
+            ->toArray()['meta'];
+        $this->assertSame($count, $last['to']);
+        $this->assertSame($count - (($count - 1) % 2), $last['from']);
+    }
+
     public function testToArrayReturnsCleanContract(): void
     {
         $request = Request::create('/', 'GET', [

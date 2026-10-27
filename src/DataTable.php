@@ -94,6 +94,7 @@ class DataTable
         $this->initRelations();
         $this->applyModelFiltering($params);
         $this->applyOrderByColumns();
+        $this->applyTieBreak();
 
         if ($params->globalFilter !== null && $params->globalFilter !== '') {
             $this->applyGlobalFilter($params->globalFilter);
@@ -462,7 +463,7 @@ class DataTable
         $orderingColumn = $this->getColumnByKey($ordering->columnName);
 
         if (! $orderingColumn) {
-            $builder->orderBy("{$mainTable}.{$ordering->columnName}", $ordering->direction);
+            $this->orderByMainColumn($builder, $mainTable, $ordering->columnName, $ordering->direction);
             $this->setBuilder($builder);
 
             return $this;
@@ -476,7 +477,7 @@ class DataTable
         }
 
         if (! $ordering->hasRelations) {
-            $builder->orderBy("{$mainTable}.{$ordering->columnName}", $ordering->direction);
+            $this->orderByMainColumn($builder, $mainTable, $ordering->columnName, $ordering->direction);
             $this->setBuilder($builder);
 
             return $this;
@@ -550,12 +551,75 @@ class DataTable
             return;
         }
 
-        $builder->orderBy("{$mainTable}.{$column->getDatabaseColumnName()}", $ordering->direction);
+        $this->orderByMainColumn($builder, $mainTable, $column->getDatabaseColumnName(), $ordering->direction);
+    }
+
+    /**
+     * Order by a column of the main table, or by an alias of the select
+     * (`withCount('entrances')` → `entrances_count`), which has no table.
+     */
+    private function orderByMainColumn(Builder $builder, string $mainTable, string $column, string $direction): void
+    {
+        $builder->orderBy(
+            in_array($column, $this->selectAliases($builder), true) ? $column : "{$mainTable}.{$column}",
+            $direction,
+        );
+    }
+
+    /**
+     * The aliases the select gives its expressions and columns (`… as name`).
+     *
+     * @return list<string>
+     */
+    private function selectAliases(Builder $builder): array
+    {
+        $query = $builder->getQuery();
+        $aliases = [];
+
+        foreach ($query->columns ?? [] as $column) {
+            $sql = $column instanceof \Illuminate\Contracts\Database\Query\Expression
+                ? (string) $column->getValue($query->getGrammar())
+                : (is_string($column) ? $column : '');
+
+            if (preg_match('/\s+as\s+[`"\[]?([\w]+)[`"\]]?\s*$/i', $sql, $match) === 1) {
+                $aliases[] = $match[1];
+            }
+        }
+
+        return $aliases;
+    }
+
+    /**
+     * Rows that tie on the chosen order (many 0 counts, equal names) must not
+     * move between pages, so the primary key decides last, in the same
+     * direction. A raw ordering is the developer's whole order and is left alone.
+     */
+    private function applyTieBreak(): void
+    {
+        if ($this->rawOrdering !== null) {
+            return;
+        }
+
+        $builder = $this->getBuilder();
+        $model = $builder->getModel();
+        $key = $model->getKeyName();
+        $qualified = "{$model->getTable()}.{$key}";
+
+        foreach ($builder->getQuery()->orders ?? [] as $order) {
+            if (in_array($order['column'] ?? null, [$key, $qualified], true)) {
+                return;
+            }
+        }
+
+        $builder->orderBy($qualified, $this->getOrdering()->direction);
     }
 
     private function qualifyMainSelect(Builder $builder, string $mainTable): void
     {
-        $existing = $builder->getQuery()->getColumns();
+        // The raw list, not getColumns(): that one turns every Expression
+        // (withCount, selectSub) into a string, which addSelect() would then
+        // quote as one column name, with its `?` bindings inside it.
+        $existing = $builder->getQuery()->columns ?? [];
 
         if (empty($existing)) {
             $builder->select("{$mainTable}.*");
@@ -739,6 +803,10 @@ class DataTable
         $total = $this->paginator->itemsLength;
         $perPage = $this->paginator->perPage;
         $currentPage = $this->paginator->currentPage;
+        // From the rows on this page: a page past the last one is empty (0–0),
+        // not "61–10 of 10".
+        $count = $this->data->count();
+        $from = $count > 0 ? (($currentPage - 1) * $perPage) + 1 : 0;
 
         return [
             'data' => $this->data->values()->all(),
@@ -747,8 +815,8 @@ class DataTable
                 'per_page' => $perPage,
                 'total' => $total,
                 'last_page' => $this->paginator->lastPage,
-                'from' => $total > 0 ? (($currentPage - 1) * $perPage) + 1 : 0,
-                'to' => min($currentPage * $perPage, $total),
+                'from' => $from,
+                'to' => $count > 0 ? $from + $count - 1 : 0,
             ],
             'columns' => $this->columns
                 ->map(fn (Column $column, string $key): array => [

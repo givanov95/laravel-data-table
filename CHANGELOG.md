@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.5.1
+
+### Fixed
+- A query with `withCount()` / `selectSub()` (any select expression) no longer fails with
+  `SQLSTATE[HY093] Invalid parameter number`: the select is re-qualified from the raw columns,
+  not from `getColumns()`, which turned the expressions into strings.
+- A declared orderable column can be an alias of the select (`posts_count` of
+  `withCount('posts')`): it is ordered without the table prefix.
+- Ties are broken by the primary key, in the same direction (unless the order is already by the
+  key, or a `RawOrdering` is set), so rows with equal values do not move between pages.
+- `ordering[direction]` other than asc/desc falls back to the default direction instead of
+  reaching `orderBy()` (a 500).
+- `DataTable::toArray()` counts `meta.from` / `meta.to` from the rows on the page: a page past
+  the last one gives `0` / `0` instead of e.g. `from: 61, to: 10` ("Showing 61–10 of 10").
+
 ## v3.5.0
 
 ### Added

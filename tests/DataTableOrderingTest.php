@@ -207,4 +207,59 @@ final class DataTableOrderingTest extends TestCase
         $this->assertSame([1, 2, 3], $this->ids($build(Request::create('/'))));
         $this->assertSame([3, 2, 1], $this->ids($build($this->request('id', 'desc'))));
     }
+
+    public function testAWithCountQueryWorksAndSortsByItsAlias(): void
+    {
+        Author::create(['name' => 'Carol']); // no posts
+
+        $request = Request::create('/', 'GET', ['ordering' => ['key' => 'posts_count', 'direction' => 'desc']]);
+        $table = (new DataTable(Author::query()->withCount('posts'), $request))
+            ->setColumn('name', 'Name', orderable: true)
+            ->setColumn('posts_count', 'Posts', orderable: true)
+            ->process();
+
+        $this->assertSame(['Alice', 'Bob', 'Carol'], $table->getData()->pluck('name')->all());
+        $this->assertSame([2, 1, 0], $table->getData()->pluck('posts_count')->map(fn ($c) => (int) $c)->all());
+    }
+
+    public function testASubSelectKeepsItsBindings(): void
+    {
+        $table = (new DataTable(
+            Author::query()->withCount(['posts as approved_count' => fn ($q) => $q->where('status', 'approved')]),
+            Request::create('/', 'GET', ['ordering' => ['key' => 'approved_count', 'direction' => 'asc']]),
+        ))
+            ->setColumn('approved_count', 'Approved', orderable: true)
+            ->process();
+
+        $this->assertSame([0, 1], $table->getData()->pluck('approved_count')->map(fn ($c) => (int) $c)->all());
+    }
+
+    public function testTiesAreBrokenByThePrimaryKeyInTheSameDirection(): void
+    {
+        Post::query()->update(['status' => 'same']);
+
+        $asc = (new DataTable(Post::query(), Request::create('/', 'GET', ['ordering' => ['key' => 'status', 'direction' => 'asc']])))
+            ->setColumn('status', 'Status', orderable: true)
+            ->process();
+        $this->assertSame([1, 2, 3], $asc->getData()->pluck('id')->all());
+
+        $desc = (new DataTable(Post::query(), Request::create('/', 'GET', ['ordering' => ['key' => 'status', 'direction' => 'desc']])))
+            ->setColumn('status', 'Status', orderable: true)
+            ->process();
+        $this->assertSame([3, 2, 1], $desc->getData()->pluck('id')->all());
+
+        // Ordering by the key itself adds nothing.
+        $byId = (new DataTable(Post::query(), Request::create('/')))->setColumn('id', '#')->process();
+        $this->assertCount(1, $byId->getBuilder()->getQuery()->orders);
+    }
+
+    public function testADirectionOtherThanAscOrDescFallsBackToTheDefault(): void
+    {
+        $table = (new DataTable(Post::query(), Request::create('/', 'GET', ['ordering' => ['key' => 'price', 'direction' => 'sideways']])))
+            ->setColumn('price', 'Price', orderable: true)
+            ->process();
+
+        $this->assertSame(['column' => 'price', 'direction' => 'desc'], $table->toArray()['state']['sort']);
+        $this->assertSame([3, 2, 1], $table->getData()->pluck('id')->all());
+    }
 }

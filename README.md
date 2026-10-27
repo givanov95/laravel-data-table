@@ -435,6 +435,14 @@ of a column then); pass what it amounts to when there is one:
 `searchPlaceholder`, `emptyText`, `trashedLabel` and `cellClass` (classes on
 every body cell, e.g. `align-top` for tall rows).
 
+`DataTable` is the client-side counterpart for rows already in the page (no
+server round trip): search, sorting, column toggle and the same footer as
+`ServerDataTable` ("Showing 1–10 of 25", page numbers, per-page select). Props:
+`columns`, `data`, `pageSize` (10), `pageSizeOptions` (`[10, 20, 50, 100]`, `[]`
+hides the select), `enableGlobalFilter`, `enableColumnToggle`,
+`searchPlaceholder`, `emptyText`, `columnsLabel`. Prefer `ServerDataTable` for
+anything that can grow: `DataTable` loads every row.
+
 ---
 
 ## Backend API reference

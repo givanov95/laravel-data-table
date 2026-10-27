@@ -1,6 +1,13 @@
 # Changelog
 
-## v3.4.1
+## v3.5.0
+
+### Added
+- The client `DataTable` of `--tag=data-table-shadcn` has the footer of `ServerDataTable`:
+  "Showing :from–:to of :total" over the filtered rows, page numbers around the current one,
+  first / previous / next / last with accessible names, and a per-page select
+  (`pageSizeOptions`, default `[10, 20, 50, 100]`; `pageSize` is always offered, `[]` hides it).
+  A search or a new page size goes back to the first page. No new translation keys.
 
 ### Fixed
 - `QueryBuilderTable::toArray()` gives `meta.from` / `meta.to` as `0` on an empty page, like

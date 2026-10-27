@@ -122,6 +122,15 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(['Apples are red'], array_column($payload['data'], 'title'));
     }
 
+    public function testAnEmptyPageCountsFromZeroLikeDataTable(): void
+    {
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => 'nothing matches this']]))->toArray();
+
+        $this->assertSame(0, $payload['meta']['total']);
+        $this->assertSame(0, $payload['meta']['from']);
+        $this->assertSame(0, $payload['meta']['to']);
+    }
+
     public function testToArrayLeavesTheCallersBuilderAlone(): void
     {
         $query = QbtArticle::query();

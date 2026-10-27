@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.5.1
+
+### Fixed
+- `DataTable::toArray()` counts `meta.from` / `meta.to` from the rows on the page: a page past
+  the last one gives `0` / `0` instead of e.g. `from: 61, to: 10` ("Showing 61–10 of 10").
+
 ## v3.5.0
 
 ### Added

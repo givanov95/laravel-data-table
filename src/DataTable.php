@@ -739,6 +739,10 @@ class DataTable
         $total = $this->paginator->itemsLength;
         $perPage = $this->paginator->perPage;
         $currentPage = $this->paginator->currentPage;
+        // From the rows on this page: a page past the last one is empty (0–0),
+        // not "61–10 of 10".
+        $count = $this->data->count();
+        $from = $count > 0 ? (($currentPage - 1) * $perPage) + 1 : 0;
 
         return [
             'data' => $this->data->values()->all(),
@@ -747,8 +751,8 @@ class DataTable
                 'per_page' => $perPage,
                 'total' => $total,
                 'last_page' => $this->paginator->lastPage,
-                'from' => $total > 0 ? (($currentPage - 1) * $perPage) + 1 : 0,
-                'to' => min($currentPage * $perPage, $total),
+                'from' => $from,
+                'to' => $count > 0 ? $from + $count - 1 : 0,
             ],
             'columns' => $this->columns
                 ->map(fn (Column $column, string $key): array => [

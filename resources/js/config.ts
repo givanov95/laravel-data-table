@@ -53,7 +53,26 @@ export function t(key: string, replacements?: Record<string, unknown>): string {
         return globalT(key, replacements);
     }
 
-    return key;
+    return fillPlaceholders(key, replacements);
+}
+
+/**
+ * `:name` placeholders filled in, in one pass like Laravel's `strtr`: the
+ * longest names win (`:total` before `:to`) and an inserted value is not
+ * scanned again. Empty names are ignored.
+ */
+export function fillPlaceholders(text: string, replacements: Record<string, unknown> = {}): string {
+    const names = Object.keys(replacements)
+        .filter((name) => name !== "")
+        .sort((a, b) => b.length - a.length);
+
+    if (names.length === 0) {
+        return text;
+    }
+
+    const pattern = new RegExp(`:(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
+
+    return text.replace(pattern, (_, name: string) => String(replacements[name]));
 }
 
 export function r(...args: unknown[]): unknown {

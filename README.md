@@ -317,6 +317,126 @@ defineProps<{
 
 ---
 
+## TanStack Table + shadcn-vue
+
+For apps built on shadcn-vue (Laravel's Vue starter kit and the ones derived
+from it), the package has a second frontend: a composable that drives the
+payload of `->process()->toArray()` with [TanStack Table](https://tanstack.com/table)
+in manual mode, and a shadcn-vue UI for it.
+
+The two parts are delivered the way each one has to be:
+
+| Part | What | How |
+| ---- | ---- | --- |
+| Logic | `useLaravelDataTable()` and the payload types | npm: `@givanov95/vue-data-table/tanstack` — updated with `npm update` |
+| UI | `ServerDataTable`, `DataTable`, `DataTableColumnHeader`, `features.ts` | published into the app — it imports the app's own `@/components/ui/*` |
+
+### Install
+
+```bash
+composer require givanov95/laravel-data-table
+npm install @givanov95/vue-data-table @tanstack/vue-table
+php artisan vendor:publish --tag=data-table-shadcn
+```
+
+The UI lands in `resources/js/components/ui/data-table/`. It needs these
+shadcn-vue components in the app: `button`, `input`, `label`, `select`,
+`switch`, `table` and `dropdown-menu`, and the `@lucide/vue` icons.
+
+**Update** both together, so the UI and the composable stay on one version:
+
+```bash
+composer update givanov95/laravel-data-table
+npm install @givanov95/vue-data-table@^3.4
+php artisan vendor:publish --tag=data-table-shadcn --force
+```
+
+The published files are the package's: `--force` overwrites them. Change them
+here (props, slots) rather than in the app.
+
+### Texts
+
+Every text of the UI goes through the package's translator, with the English
+text as the key. Hook up the app's translator once, after its own i18n plugin:
+
+```ts
+import { DataTablePlugin } from "@givanov95/vue-data-table/tanstack";
+
+app.use(TranslationPlugin, translations) // the app's own __()
+    .use(DataTablePlugin, { translator: (key, replacements) => app.config.globalProperties.__(key, replacements) });
+```
+
+Without a translator the English keys are shown, with `:placeholders` filled
+in. The keys, for the app's `lang/*.json`:
+
+| Key | bg | nl |
+| --- | -- | -- |
+| `Search…` | Търсене… | Zoeken… |
+| `No results.` | Няма резултати. | Geen resultaten. |
+| `Show archived` | Покажи архивираните | Toon gearchiveerde |
+| `Showing :from–:to of :total` | Показани :from–:to от :total | :from–:to van :total |
+| `Rows per page` | Редове на страница | Rijen per pagina |
+| `First page` | Първа страница | Eerste pagina |
+| `Previous page` | Предишна страница | Vorige pagina |
+| `Next page` | Следваща страница | Volgende pagina |
+| `Last page` | Последна страница | Laatste pagina |
+| `Columns` | Колони | Kolommen |
+
+The translator receives `:from`, `:to` and `:total` as replacements; it must
+replace the longest names first (Laravel does), or `:to` eats the start of
+`:total`. `fillPlaceholders()` of the package does it right.
+
+### Usage
+
+```vue
+<script setup lang="ts">
+import { h } from "vue";
+import { useLaravelDataTable } from "@givanov95/vue-data-table/tanstack";
+import type { LaravelDataTablePayload } from "@givanov95/vue-data-table/tanstack";
+import { DataTableColumnHeader, ServerDataTable } from "@/components/ui/data-table";
+import type { DataTableColumnDef } from "@/components/ui/data-table";
+
+type Row = { id: number; name: string };
+
+const props = defineProps<{ dataTable: LaravelDataTablePayload<Row> }>();
+const table = useLaravelDataTable<Row>(() => props.dataTable);
+
+const columns: DataTableColumnDef<Row>[] = [
+    {
+        accessorKey: "name",
+        header: ({ column }) => h(DataTableColumnHeader, { column, title: "Name" }),
+    },
+];
+</script>
+
+<template>
+    <ServerDataTable :columns="columns" v-bind="table">
+        <template #toolbar><!-- the page's own filters --></template>
+    </ServerDataTable>
+</template>
+```
+
+`useLaravelDataTable(payload, options)` options: `propName` (default
+`dataTable`), `alsoReload` (other props to refresh with the table, e.g. the
+page's own filters), `searchDebounceMs` (1200) and `perPageOptions`
+(`[10, 20, 50, 100]`; the applied size is always offered). The table follows
+the server's applied state (`state.sort`, `state.search`, `state.trashed`), so
+back/forward and shared links stay right; a new sort, page size, search or
+archive goes back to page 1. `clearSearch(data)` empties the search box and
+reloads once, together with the page's own filter changes. The request keys
+come from the payload's `params` (`config/data-table.php`), so changing a key
+there needs nothing on the frontend.
+
+A `RawOrdering` hides the sort from `state.sort` (the rows are not in the order
+of a column then); pass what it amounts to when there is one:
+`new RawOrdering('created_at DESC, id DESC', new Ordering('created_at', 'DESC'))`.
+
+`ServerDataTable` props beyond the composable's: `showTrashed`,
+`searchPlaceholder`, `emptyText`, `trashedLabel` and `cellClass` (classes on
+every body cell, e.g. `align-top` for tall rows).
+
+---
+
 ## Backend API reference
 
 ### `DataTable`
@@ -368,12 +488,14 @@ laravel-data-table/
 │   ├── Exceptions/
 │   ├── Support/
 │   └── config/data-table.php
+├── stubs/shadcn/              # shadcn-vue UI, published with --tag=data-table-shadcn
 └── resources/
     └── js/                    # Vue / TypeScript source
         ├── index.ts
         ├── install.ts
         ├── config.ts
         ├── Table.vue
+        ├── tanstack/          # useLaravelDataTable (npm: @givanov95/vue-data-table/tanstack)
         ├── components/
         ├── icons/
         ├── types/

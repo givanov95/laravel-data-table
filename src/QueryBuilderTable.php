@@ -200,6 +200,7 @@ class QueryBuilderTable
                     : null,
                 'trashed' => $trashed,
             ],
+            'params' => DataTableConfig::requestKeys(),
         ];
     }
 

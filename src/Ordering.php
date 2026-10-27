@@ -53,7 +53,11 @@ final class Ordering
             $values = [];
         }
 
-        $direction = (string) ($values['direction'] ?? $defaultDirection);
+        // Only asc/desc reach orderBy(): anything else would be a 500.
+        $requested = $values['direction'] ?? $defaultDirection;
+        $direction = is_string($requested) && in_array(strtolower($requested), ['asc', 'desc'], true)
+            ? $requested
+            : $defaultDirection;
 
         if (! isset($values['key'])) {
             return new self($defaultKey, $direction);

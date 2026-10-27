@@ -189,8 +189,9 @@ class QueryBuilderTable
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
-                'from' => $paginator->firstItem(),
-                'to' => $paginator->lastItem(),
+                // 0 on an empty page, like DataTable (the paginator gives null).
+                'from' => $paginator->firstItem() ?? 0,
+                'to' => $paginator->lastItem() ?? 0,
             ],
             'columns' => $this->columns,
             'state' => [

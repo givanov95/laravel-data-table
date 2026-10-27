@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.4.1
+
+### Fixed
+- `QueryBuilderTable::toArray()` gives `meta.from` / `meta.to` as `0` on an empty page, like
+  `DataTable` (it gave the paginator's `null`, shown as "Showing null–null of 0").
+
 ## v3.4.0
 
 ### Added

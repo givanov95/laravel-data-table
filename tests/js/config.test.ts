@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setConfig, resetConfig, t, r, getReloadDebounceMs } from "../../resources/js/config";
+import { setConfig, resetConfig, t, r, getReloadDebounceMs, fillPlaceholders } from "../../resources/js/config";
 
 describe("config", () => {
     beforeEach(() => {
@@ -17,6 +17,10 @@ describe("config", () => {
     describe("t (translator)", () => {
         it("returns the key unchanged by default", () => {
             expect(t("Hello")).toBe("Hello");
+        });
+
+        it("fills the placeholders of the key when nothing translates it", () => {
+            expect(t("Showing :from–:to of :total", { from: 1, to: 20, total: 45 })).toBe("Showing 1–20 of 45");
         });
 
         it("uses the configured translator", () => {
@@ -67,6 +71,16 @@ describe("config", () => {
         it("respects overrides", () => {
             setConfig({ reloadDebounceMs: 250 });
             expect(getReloadDebounceMs()).toBe(250);
+        });
+    });
+
+    describe("fillPlaceholders", () => {
+        it("replaces the longest names first, so :to does not eat :total", () => {
+            expect(fillPlaceholders("Of :total: :from–:to", { from: 1, to: 20, total: 45 })).toBe("Of 45: 1–20");
+        });
+
+        it("replaces every occurrence", () => {
+            expect(fillPlaceholders(":n and :n", { n: 2 })).toBe("2 and 2");
         });
     });
 });

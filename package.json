@@ -1,7 +1,7 @@
 {
     "name": "@givanov95/vue-data-table",
-    "version": "3.3.0",
-    "description": "Vue 3 + Inertia data-table components for givanov95/laravel-data-table.",
+    "version": "3.4.0",
+    "description": "Vue 3 + Inertia data-table components and a TanStack Table composable for givanov95/laravel-data-table.",
     "license": "MIT",
     "author": "Georgi Ivanov <joroz95@gmail.com>",
     "type": "module",
@@ -13,6 +13,10 @@
             "types": "./resources/js/index.ts",
             "import": "./resources/js/index.ts"
         },
+        "./tanstack": {
+            "types": "./resources/js/tanstack/index.ts",
+            "import": "./resources/js/tanstack/index.ts"
+        },
         "./*": "./resources/js/*"
     },
     "files": [
@@ -22,10 +26,12 @@
     ],
     "peerDependencies": {
         "@inertiajs/vue3": "^2.0.0 || ^3.0.0",
-        "vue": "^3.2.0"
+        "vue": "^3.3.0",
+        "@tanstack/vue-table": "^9.2.0"
     },
     "devDependencies": {
         "@inertiajs/vue3": "^3.8.0",
+        "@tanstack/vue-table": "^9.3.1",
         "@types/node": "^25.9.0",
         "@vitejs/plugin-vue": "^6.0.7",
         "@vue/test-utils": "^2.4.10",
@@ -58,5 +64,10 @@
     "bugs": {
         "url": "https://github.com/givanov95/laravel-data-table/issues"
     },
-    "homepage": "https://github.com/givanov95/laravel-data-table#readme"
+    "homepage": "https://github.com/givanov95/laravel-data-table#readme",
+    "peerDependenciesMeta": {
+        "@tanstack/vue-table": {
+            "optional": true
+        }
+    }
 }

@@ -342,7 +342,9 @@ class DataTable
             return;
         }
 
-        $model = $this->getBuilder()->getModel()->newQuery()
+        // Through the table's own query, so a record outside the list (another
+        // tenant's, say) is a 404 instead of being restored by its id.
+        $model = (clone $this->getBuilder())
             ->withTrashed()
             ->findOrFail($params->restoreId);
 

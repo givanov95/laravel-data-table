@@ -216,6 +216,31 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $this->assertNull(Post::find(2)->deleted_at);
     }
 
+    public function testSoftRestoreOnlyFindsRecordsOfTheTablesQuery(): void
+    {
+        // Post 3 is Bob's; the table lists Alice's posts only.
+        Post::find(3)->delete();
+        \Illuminate\Support\Facades\Gate::policy(Post::class, PostPolicy::class);
+
+        try {
+            (new DataTable(Post::query()->where('author_id', 1), Request::create('/', 'GET', ['restore_id' => 3])))
+                ->setColumn('id', '#')
+                ->process();
+            $this->fail('A record outside the table must not be found.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        }
+
+        $this->assertNotNull(Post::withTrashed()->find(3)->deleted_at);
+
+        // One of the table's own records is restored as before.
+        Post::find(2)->delete();
+        (new DataTable(Post::query()->where('author_id', 1), Request::create('/', 'GET', ['restore_id' => 2])))
+            ->setColumn('id', '#')
+            ->process();
+
+        $this->assertNull(Post::find(2)->deleted_at);
+    }
+
     public function testRawOrderingWinsOverNormalOrdering(): void
     {
         $request = Request::create('/', 'GET', [

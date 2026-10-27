@@ -53,7 +53,17 @@ export function t(key: string, replacements?: Record<string, unknown>): string {
         return globalT(key, replacements);
     }
 
-    return key;
+    return fillPlaceholders(key, replacements);
+}
+
+/**
+ * `:name` placeholders filled in, every occurrence and the longest names
+ * first (like Laravel), so `:to` does not eat the start of `:total`.
+ */
+export function fillPlaceholders(text: string, replacements: Record<string, unknown> = {}): string {
+    return Object.keys(replacements)
+        .sort((a, b) => b.length - a.length)
+        .reduce((result, name) => result.split(`:${name}`).join(String(replacements[name])), text);
 }
 
 export function r(...args: unknown[]): unknown {

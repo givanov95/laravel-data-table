@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.4.0
+
+### Added
+- `@givanov95/vue-data-table/tanstack`: `useLaravelDataTable()` and the payload types of
+  `->process()->toArray()`, for TanStack Table in manual mode. It follows the server's applied
+  state (sort, search, archive), so back/forward and shared links stay right; a new sort, page
+  size, search or archive goes back to page 1; `clearSearch(data)` empties the search and
+  reloads once with the page's own changes; `alsoReload` refreshes other props with the table.
+  `@tanstack/vue-table` is an optional peer dependency.
+- `php artisan vendor:publish --tag=data-table-shadcn`: the shadcn-vue UI for it
+  (`ServerDataTable`, `DataTable`, `DataTableColumnHeader`, `features.ts`), published into
+  `resources/js/components/ui/data-table`. Every text goes through the package's translator
+  (English keys, listed in the README), the page buttons and the per-page select have
+  accessible names, and `cellClass` sets classes on every body cell.
+- `fillPlaceholders()`: `:name` placeholders filled in, the longest names first.
+
+### Changed
+- `DataTablePlugin` is typed with its options (`Plugin<[DataTablePluginOptions?]>`), so
+  `app.use(DataTablePlugin, { translator })` infers the translator's parameters. The `vue`
+  peer dependency is `^3.3.0` (the first version with typed plugin options).
+- `t()` without a translator now fills the `:placeholders` of the key instead of returning
+  them as they are.
+
+### Fixed
+- `?restore_id=` looks the record up through the table's own query, so a record outside the
+  list (another tenant's, say) is a 404 instead of being restored by its id.
+
 ## v3.3.0
 
 ### Added

@@ -9,6 +9,9 @@
 export { useLaravelDataTable } from "./useLaravelDataTable";
 export type {
     LaravelDataTableColumn,
+    LaravelDataTableColumnFilter,
+    LaravelDataTableFilterOption,
+    LaravelDataTableFilterValue,
     LaravelDataTableMeta,
     LaravelDataTablePayload,
     LaravelDataTableState,

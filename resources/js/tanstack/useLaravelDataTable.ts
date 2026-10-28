@@ -1,6 +1,6 @@
 import type { VisitOptions } from "@inertiajs/core";
 import { router, usePage } from "@inertiajs/vue3";
-import type { PaginationState, SortingState, Updater } from "@tanstack/vue-table";
+import type { ColumnFiltersState, PaginationState, SortingState, Updater } from "@tanstack/vue-table";
 import { computed, onScopeDispose, reactive, ref, toValue, watch } from "vue";
 import type { MaybeRefOrGetter } from "vue";
 
@@ -20,17 +20,38 @@ export interface LaravelDataTableMeta {
     to: number;
 }
 
+/** An option of a select filter. */
+export interface LaravelDataTableFilterOption {
+    value: string | number;
+    label: string;
+}
+
+/** How a filterable column is filtered (v4.1+). */
+export interface LaravelDataTableColumnFilter {
+    /** `select`: one or several of `options`; `date`: a `from` / `to` range of days; `text`: contains. */
+    type: "select" | "date" | "text";
+    options?: LaravelDataTableFilterOption[];
+}
+
+/** The value of a column filter: a text, the values of a select, or a date range (ISO days). */
+export type LaravelDataTableFilterValue = string | string[] | { from?: string; to?: string };
+
 export interface LaravelDataTableColumn {
     key: string;
     label: string | null;
     sortable: boolean;
     searchable: boolean;
+    /** v4.1+. */
+    filterable?: boolean;
+    filter?: LaravelDataTableColumnFilter | null;
 }
 
 export interface LaravelDataTableState {
     search?: string;
     sort?: { column: string; direction: string } | null;
     trashed?: boolean;
+    /** The column filters as applied (v4.1+); PHP sends an empty one as `[]`. */
+    filters?: Record<string, LaravelDataTableFilterValue> | [];
 }
 
 /** The request keys of the server's config/data-table.php (dotted: `filter.global`). */
@@ -41,6 +62,8 @@ export interface LaravelDataTableParams {
     ordering: string;
     /** Sent by v4+; next to `global_filter` (`filter.timeZone`) otherwise. */
     time_zone?: string;
+    /** The parameter of the column filters (v4.1+; `filter` otherwise). */
+    column_filters?: string;
 }
 
 export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
@@ -55,7 +78,7 @@ export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
 }
 
 /** A query value: nested objects become `key[sub]`; empty values remove the key. */
-export type QueryValue = string | number | boolean | null | undefined | { [key: string]: QueryValue };
+export type QueryValue = string | number | boolean | null | undefined | QueryValue[] | { [key: string]: QueryValue };
 
 export interface UseLaravelDataTableOptions {
     /** The Inertia prop that holds the payload; reloaded on every change. */
@@ -369,6 +392,141 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         router.post(url, {}, { preserveState: true, preserveScroll: true });
     }
 
+    // ----- Column filters ----------------------------------------------------------
+
+    /** The columns the server filters by, with how (in definition order). */
+    const filterColumns = computed(() =>
+        payload.value.columns.filter(
+            (c): c is LaravelDataTableColumn & { filter: LaravelDataTableColumnFilter } => !!c.filterable && !!c.filter,
+        ),
+    );
+
+    const isEmptyFilter = (value: LaravelDataTableFilterValue | undefined): boolean => {
+        if (value === undefined || value === "") return true;
+        if (Array.isArray(value)) return value.length === 0;
+        if (typeof value === "object") return !value.from && !value.to;
+
+        return false;
+    };
+
+    const serverFilters = (): Record<string, LaravelDataTableFilterValue> => {
+        const applied = payload.value.state?.filters;
+
+        return applied && !Array.isArray(applied) ? { ...applied } : {};
+    };
+
+    // Typed into (a text filter waits like the search), so local: seeded from
+    // the payload and re-synced from it while nothing is waiting or in flight,
+    // so the answer to one change does not undo the next (two quick ticks).
+    const filters = ref<Record<string, LaravelDataTableFilterValue>>(serverFilters());
+    let filterTimer: ReturnType<typeof setTimeout> | undefined;
+    let filterSeq = 0;
+    let filtersInFlight = false;
+
+    watch(
+        () => JSON.stringify(payload.value.state?.filters ?? {}),
+        () => {
+            if (filterTimer === undefined && !filtersInFlight) {
+                filters.value = serverFilters();
+            }
+        },
+    );
+
+    const cancelFilters = (): void => {
+        clearTimeout(filterTimer);
+        filterTimer = undefined;
+    };
+
+    onScopeDispose(cancelFilters);
+
+    /** `filter[status]`: the key is taken as it is, dots and all (`filter[author.name]`). */
+    const filterQueryKey = (key: string): string => `${queryKey(params.value.column_filters ?? "filter")}[${key}]`;
+
+    /** Every filterable column's current value, page 1, one visit. */
+    function sendFilters(): void {
+        cancelFilters();
+
+        const changes: Record<string, QueryValue> = { page: 1 };
+
+        for (const column of filterColumns.value) {
+            const value = filters.value[column.key];
+
+            changes[filterQueryKey(column.key)] = isEmptyFilter(value) ? undefined : (value as QueryValue);
+        }
+
+        const seq = ++filterSeq;
+        filtersInFlight = true;
+
+        visit(changes, {
+            onFinish: () => {
+                // Only the latest visit, with nothing waiting, hands back to the server.
+                if (seq === filterSeq && filterTimer === undefined) {
+                    filtersInFlight = false;
+                    filters.value = serverFilters();
+                }
+            },
+        });
+    }
+
+    /**
+     * Set one column's filter. A text waits like the search box; a select or
+     * a date range is sent at once. An empty value removes the filter.
+     */
+    function setColumnFilter(key: string, value: LaravelDataTableFilterValue | undefined): void {
+        const next = { ...filters.value };
+
+        if (isEmptyFilter(value)) {
+            delete next[key];
+        } else {
+            next[key] = value as LaravelDataTableFilterValue;
+        }
+
+        filters.value = next;
+
+        const type = filterColumns.value.find((c) => c.key === key)?.filter.type;
+
+        cancelFilters();
+
+        if (type === "text") {
+            filterTimer = setTimeout(sendFilters, searchDebounceMs);
+
+            return;
+        }
+
+        sendFilters();
+    }
+
+    function clearColumnFilters(): void {
+        filters.value = {};
+        sendFilters();
+    }
+
+    const hasColumnFilters = computed(() => Object.values(filters.value).some((v) => !isEmptyFilter(v)));
+
+    // TanStack's view of the same filters (ids with dots as underscores).
+    const columnFilters = computed<ColumnFiltersState>(() =>
+        Object.entries(filters.value)
+            .filter(([, value]) => !isEmptyFilter(value))
+            .map(([key, value]) => ({ id: columnId(key), value })),
+    );
+
+    function onColumnFiltersChange(updaterOrValue: Updater<ColumnFiltersState>): void {
+        const next = typeof updaterOrValue === "function" ? updaterOrValue(columnFilters.value) : updaterOrValue;
+        const byId = new Map(filterColumns.value.map((c) => [columnId(c.key), c.key]));
+        const values: Record<string, LaravelDataTableFilterValue> = {};
+
+        for (const { id, value } of next) {
+            const key = byId.get(id);
+
+            if (key !== undefined && !isEmptyFilter(value as LaravelDataTableFilterValue)) {
+                values[key] = value as LaravelDataTableFilterValue;
+            }
+        }
+
+        filters.value = values;
+        sendFilters();
+    }
+
     // ----- Pages -------------------------------------------------------------------
 
     function goToPage(pageNumber: number): void {
@@ -400,7 +558,14 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
             pagination: pagination.value,
             sorting: sorting.value,
             globalFilter: globalFilter.value,
+            columnFilters: columnFilters.value,
         })),
+        onColumnFiltersChange,
+        filterColumns,
+        filters,
+        setColumnFilter,
+        clearColumnFilters,
+        hasColumnFilters,
         onPaginationChange,
         onSortingChange,
         onGlobalFilterChange,

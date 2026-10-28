@@ -169,26 +169,30 @@ class DataTable
             $localeColumn,
             $textColumn,
         ) {
+            if ($this->translatableColumns->isEmpty()) {
+                return $item;
+            }
+
+            $translations = $item->{$relation};
+
+            if (! $translations instanceof Collection) {
+                $translations = new Collection($translations ? [$translations] : []);
+            }
+
+            // One pass over the row's translations: [key][locale] => the first one stored.
+            // On the stored values: the translation model may cast its locale or key
+            // (to an enum, a value object), which would never equal the column's text;
+            // a language the column does not list is skipped, whatever the cast makes of it.
+            $index = [];
+
+            foreach ($translations as $translation) {
+                $attributes = $translation->getAttributes();
+                $index[(string) ($attributes[$keyColumn] ?? '')][(string) ($attributes[$localeColumn] ?? '')] ??= $translation;
+            }
+
             foreach ($this->translatableColumns as $translatableColumn) {
                 $key = $translatableColumn->getTranslationKey();
-                $translations = $item->{$relation};
-
-                if (! $translations instanceof Collection) {
-                    $translations = new Collection($translations ? [$translations] : []);
-                }
-
-                // On the stored values: the translation model may cast its locale or key
-                // (to an enum, a value object), which would never equal the column's text;
-                // a language the column does not list is skipped, whatever the cast makes of it.
-                $byLocale = [];
-
-                foreach ($translations as $translation) {
-                    $attributes = $translation->getAttributes();
-
-                    if ((string) ($attributes[$keyColumn] ?? '') === (string) $key) {
-                        $byLocale[(string) ($attributes[$localeColumn] ?? '')] ??= $translation;
-                    }
-                }
+                $byLocale = $index[(string) $key] ?? [];
 
                 // The first language with a text that is not empty; with none, the column's own
                 // translation as it is (an empty text stays empty).
@@ -197,7 +201,8 @@ class DataTable
                 foreach ($translatableColumn->getLocales() as $locale) {
                     $translation = $byLocale[(string) $locale] ?? null;
 
-                    if ($translation && trim((string) $translation->{$textColumn}) !== '') {
+                    // Spaces only, as SQL's TRIM() in the ordering: both must agree on what is empty.
+                    if ($translation && trim((string) $translation->{$textColumn}, ' ') !== '') {
                         $shown = $translation;
 
                         break;
@@ -1156,7 +1161,12 @@ class DataTable
         }
 
         $shown = count($texts) === 1 ? $texts[0] : 'COALESCE('.implode(', ', $texts).')';
-        $direction = strtolower($ordering->direction) === 'desc' ? 'desc' : 'asc';
+        // As orderBy() does: the direction goes into raw SQL, so anything else is refused.
+        $direction = strtolower($ordering->direction);
+
+        if (! in_array($direction, ['asc', 'desc'], true)) {
+            throw new \InvalidArgumentException('Order direction must be "asc" or "desc".');
+        }
 
         $builder->orderByRaw("CASE WHEN {$shown} IS NULL THEN 1 ELSE 0 END")
             ->orderByRaw("{$shown} {$direction}");

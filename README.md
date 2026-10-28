@@ -266,6 +266,8 @@ new TranslatableColumn(Locale::Bg, 'title', __('Title'), searchable: true, order
 - The row shows the first language with a text that is not empty. A language the
   column does not list (or its enum cast does not know) is skipped, without an error.
 - Search, global and by column, looks at the text in every language of the column.
+- When the query loads the translations itself (`with('translations')`), that load must
+  include the fallback languages, or a row cannot show them.
 - Ordering is by the shown text. Rows without one (or with an empty text) come last
   in both directions, the same on MySQL, PostgreSQL and SQLite; this holds for a
   column without fallbacks too.

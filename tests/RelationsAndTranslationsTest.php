@@ -303,6 +303,40 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame([11, 13, 12, 10, 16, 15, 14], $order('desc'));
     }
 
+    public function testOnlySpacesCountAsAnEmptyTextForTheShownTextAndTheOrderAlike(): void
+    {
+        $this->seedFallbackShops();
+        // 17: a newline in en, which is a text for SQL's TRIM() and so for the ordering too.
+        RlShop::create(['uid' => 17, 'name' => 'Shop 17'])->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => "\n"]);
+        RlShop::find(17)->translations()->create(['locale' => 'bg', 'key' => 'title', 'text' => 'Zebra']);
+
+        $table = (new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'title', 'direction' => 'asc']])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true, fallbackLocales: ['bg']))
+            ->process();
+
+        $this->assertSame("\n", $this->titles($table)[17]);
+        // Shown and ordered as the same text: "\n" sorts before the letters, not among the Z's.
+        $this->assertSame(17, $this->uids($table)[0]);
+    }
+
+    public function testFallbackLanguagesAreKeptOnceEach(): void
+    {
+        $column = new TranslatableColumn('bg', 'title', fallbackLocales: ['en', 'en', RlLocale::En, 'bg', 'de']);
+
+        $this->assertSame(['en', 'de'], $column->getFallbackLocales());
+        $this->assertSame(['bg', 'en', 'de'], $column->getLocales());
+    }
+
+    public function testAnInvalidDirectionIsRefusedAsForOtherColumns(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true))
+            ->setOrdering(new \Givanov95\DataTable\Ordering('title', 'descending'))
+            ->process();
+    }
+
     public function testOrdersByAHasOneRelation(): void
     {
         $table = (new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'profile.city', 'direction' => 'asc']])))

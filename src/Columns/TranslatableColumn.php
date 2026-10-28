@@ -41,10 +41,19 @@ final class TranslatableColumn extends Column
 
         $this->translationKey = $translationKey;
         $this->locale = self::localeValue($locale);
-        $this->fallbackLocales = array_values(array_filter(
-            array_map(self::localeValue(...), $fallbackLocales),
-            fn (string|int $fallback) => (string) $fallback !== (string) $this->locale,
-        ));
+
+        // Each language once, compared as text (`'1'` and `1` are one locale), the column's own excluded.
+        $fallbacks = [];
+
+        foreach ($fallbackLocales as $fallback) {
+            $fallback = self::localeValue($fallback);
+
+            if ((string) $fallback !== (string) $this->locale) {
+                $fallbacks[(string) $fallback] ??= $fallback;
+            }
+        }
+
+        $this->fallbackLocales = array_values($fallbacks);
     }
 
     private static function localeValue(string|int|\UnitEnum $locale): string|int
@@ -75,12 +84,6 @@ final class TranslatableColumn extends Column
      */
     public function getLocales(): array
     {
-        $locales = [];
-
-        foreach ([$this->locale, ...$this->fallbackLocales] as $locale) {
-            $locales[(string) $locale] ??= $locale;
-        }
-
-        return array_values($locales);
+        return [$this->locale, ...$this->fallbackLocales];
     }
 }

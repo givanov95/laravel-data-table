@@ -424,6 +424,23 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(5, $this->table(Request::create('/'))->defaultPerPage(25)->toArray()['meta']['per_page']);
     }
 
+    public function testTheDefaultSortIsTheModelsKey(): void
+    {
+        Schema::create('qbt_keyed', function (Blueprint $table) {
+            $table->increments('uid');
+            $table->string('title');
+        });
+        QbtKeyed::create(['title' => 'First']);
+        QbtKeyed::create(['title' => 'Second']);
+
+        $payload = QueryBuilderTable::for(QbtKeyed::query(), Request::create('/'))
+            ->columns([['key' => 'title', 'label' => 'Title']])
+            ->toArray();
+
+        $this->assertSame(['column' => 'uid', 'direction' => 'desc'], $payload['state']['sort']);
+        $this->assertSame(['Second', 'First'], array_column($payload['data'], 'title'));
+    }
+
     public function testMaxPerPageRejectsNonPositiveValues(): void
     {
         $this->expectException(InvalidArgumentException::class);
@@ -446,4 +463,15 @@ class QbtPlainArticle extends Model
     protected $table = 'qbt_articles';
 
     protected $guarded = [];
+}
+
+class QbtKeyed extends Model
+{
+    protected $table = 'qbt_keyed';
+
+    protected $primaryKey = 'uid';
+
+    protected $guarded = [];
+
+    public $timestamps = false;
 }

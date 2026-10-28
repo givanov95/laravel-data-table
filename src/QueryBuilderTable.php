@@ -39,7 +39,8 @@ class QueryBuilderTable
 
     private ?string $trashedAbility = null;
 
-    private string $defaultSortKey = 'id';
+    /** Null: the model's key (`getKeyName()`). */
+    private ?string $defaultSortKey = null;
 
     private string $defaultSortDirection = 'desc';
 
@@ -266,7 +267,7 @@ class QueryBuilderTable
             return [$key, $direction];
         }
 
-        return [$this->defaultSortKey, $this->defaultSortDirection];
+        return [$this->defaultSortKey ?? $this->query->getModel()->getKeyName(), $this->defaultSortDirection];
     }
 
     private function resolvePerPage(): int

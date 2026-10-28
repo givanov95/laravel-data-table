@@ -1,5 +1,19 @@
 # Changelog
 
+## v4.0.1
+
+### Fixed
+- An `exactMatch` column no longer hands PostgreSQL a value its type rejects (a 500). 4.0.0 guarded
+  the columns numeric by their cast; now any other column is compared as text on PostgreSQL
+  (`CAST(column AS TEXT) = ?`): a uuid key, a boolean or date cast, a number without a cast. MySQL
+  and SQLite compare as before. A column numeric by its cast keeps the typed comparison.
+- An exact price match goes through the same comparison, so a long number in the search box (a
+  phone number, an IBAN) is not a 22003 on an `integer` price column.
+- The bundled `DataTable` component identifies a row by the model's key: the payload carries
+  `keyName` (`getKeyName()`), and the new `row-key` prop overrides it. `?id` in `rowClickLink` and
+  `restoreUrl` was always filled from `id`, so a model keyed on `uid` posted to
+  `/…/undefined/restore`.
+
 ## v4.0.0
 
 ### Breaking

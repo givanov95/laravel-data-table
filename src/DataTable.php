@@ -65,6 +65,12 @@ class DataTable
     /** Whether the rows are the archive (soft-deleted ones), as applied. */
     public bool $trashed = false;
 
+    /**
+     * Whether this user may see the archive at all (allowTrashed(), SoftDeletes,
+     * its ability): a frontend shows the archive toggle only then.
+     */
+    public bool $trashedAllowed = false;
+
     /** The model's key (`getKeyName()`): which field of a row identifies it, for the bundled widget. */
     public string $keyName = 'id';
 
@@ -97,7 +103,7 @@ class DataTable
     /** @var array<string, string|list<string>|array{from?: string, to?: string}> */
     private array $appliedFilters = [];
 
-    private bool $trashedAllowed = false;
+    private bool $trashedOptIn = false;
 
     private ?string $trashedAbility = null;
 
@@ -194,7 +200,7 @@ class DataTable
      */
     public function allowTrashed(bool $allow = true, ?string $ability = null): self
     {
-        $this->trashedAllowed = $allow;
+        $this->trashedOptIn = $allow;
         $this->trashedAbility = $ability;
 
         return $this;
@@ -202,22 +208,44 @@ class DataTable
 
     /**
      * Restore a soft-deleted record of this table, from the POST route of the
-     * app: the record is looked up through the table's query (and `$scope`,
-     * the same narrowing as the callback given to process()), so a record the
-     * table does not list is a 404. Then the `restore` policy is checked.
-     *
-     * The archive has to be allowed (`allowTrashed()`) and the model has to use
-     * SoftDeletes, or it is a 404; the ability of `allowTrashed()`, if any, has
-     * to pass, or it is a 403.
+     * app, and redirect back with a `success` flash message. See
+     * restoreRecord() for the checks, and for `$before`.
      *
      * @param ?callable(Builder):void $scope
+     * @param ?callable(Model):void $before
      */
-    public function restore(int|string $id, ?callable $scope = null): RedirectResponse
+    public function restore(int|string $id, ?callable $scope = null, ?callable $before = null): RedirectResponse
+    {
+        $this->restoreRecord($id, $scope, $before);
+
+        return back()->with('success', __('The record has been successfully restored.'));
+    }
+
+    /**
+     * Restore a soft-deleted record of this table and return it, leaving the
+     * response (and its message) to the app.
+     *
+     * The record is looked up through the table's query (and `$scope`, the
+     * same narrowing as the callback given to process()), among the archived
+     * rows only, so a record the table does not list is a 404. The archive has
+     * to be allowed (`allowTrashed()`) and the model has to use SoftDeletes,
+     * or it is a 404; the ability of `allowTrashed()`, if any, has to pass, or
+     * it is a 403. Then the `restore` policy is checked.
+     *
+     * `$before` runs after all of that, with the record, right before it is
+     * restored: the place for the app's own rules (a seat limit, a flag to
+     * set). It can refuse by throwing (e.g. a ValidationException); attributes
+     * it sets are saved by the restore, in the same write.
+     *
+     * @param ?callable(Builder):void $scope
+     * @param ?callable(Model):void $before
+     */
+    public function restoreRecord(int|string $id, ?callable $scope = null, ?callable $before = null): Model
     {
         $builder = clone $this->getBuilder();
         $model = $builder->getModel();
 
-        if (! $this->trashedAllowed || ! Archive::supports($model)) {
+        if (! $this->trashedOptIn || ! Archive::supports($model)) {
             throw (new ModelNotFoundException())->setModel($model::class, [$id]);
         }
 
@@ -239,7 +267,16 @@ class DataTable
         /** @phpstan-ignore-next-line — onlyTrashed() is provided by the SoftDeletes scope. */
         $record = $builder->onlyTrashed()->findOrFail($id);
 
-        return (new SoftRestorer($record))->restore();
+        Gate::authorize('restore', $record);
+
+        if ($before !== null) {
+            $before($record);
+        }
+
+        /** @phpstan-ignore-next-line — restore() is provided by SoftDeletes. */
+        $record->restore();
+
+        return $record;
     }
 
     /**
@@ -573,8 +610,8 @@ class DataTable
 
     private function applyModelFiltering(DataTableParams $params): void
     {
-        $this->trashed = $params->trashed === 'true'
-            && Archive::available($this->trashedAllowed, $this->getBuilder()->getModel(), $this->trashedAbility);
+        $this->trashedAllowed = Archive::available($this->trashedOptIn, $this->getBuilder()->getModel(), $this->trashedAbility);
+        $this->trashed = $params->trashed === 'true' && $this->trashedAllowed;
 
         if (! $this->trashed) {
             return;
@@ -1210,7 +1247,7 @@ class DataTable
      *       'data'    => [ ...row... ],
      *       'meta'    => [ current_page, per_page, total, last_page, from, to ],
      *       'columns' => [ [ key, label, sortable, searchable, filterable, filter ], ... ],   // ordered
-     *       'state'   => [ search, sort => [column, direction] | null, trashed, filters ],
+     *       'state'   => [ search, sort => [column, direction] | null, trashed, trashed_allowed, filters ],
      *       'params'  => [ per_page, global_filter, trashed, ordering, time_zone ],   // request keys
      *     ]
      *
@@ -1255,6 +1292,7 @@ class DataTable
                 'search' => $this->params->globalFilter ?? '',
                 'sort' => $this->appliedSort(),
                 'trashed' => $this->trashed,
+                'trashed_allowed' => $this->trashedAllowed,
                 'filters' => $this->appliedFilters,
             ],
             'params' => $this->requestKeys,

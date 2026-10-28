@@ -266,6 +266,15 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame('filter.tz', $payload['params']['time_zone']);
     }
 
+    public function testThePayloadSaysWhetherTheArchiveIsAllowed(): void
+    {
+        $this->assertTrue($this->table(Request::create('/'))->toArray()['state']['trashed_allowed']);
+
+        Gate::define('viewArchive', fn (?object $user): bool => false);
+        $this->assertFalse($this->table(Request::create('/'))->allowTrashed(ability: 'viewArchive')->toArray()['state']['trashed_allowed']);
+        $this->assertFalse($this->table(Request::create('/'))->allowTrashed(false)->toArray()['state']['trashed_allowed']);
+    }
+
     public function testTrashedOnAModelWithoutSoftDeletesIsIgnored(): void
     {
         $payload = QueryBuilderTable::for(QbtPlainArticle::query(), Request::create('/', 'GET', ['filter' => ['trashed' => 'true']]))

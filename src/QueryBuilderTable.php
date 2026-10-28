@@ -187,13 +187,14 @@ class QueryBuilderTable
      *     data: list<array<string, mixed>>,
      *     meta: array{current_page: int, per_page: int, total: int, last_page: int, from: int|null, to: int|null},
      *     columns: list<array{key: string, label: string|null, sortable: bool, searchable: bool}>,
-     *     state: array{search: string|null, sort: array{column: string, direction: string}|null, trashed: bool, filters: array<string, mixed>},
+     *     state: array{search: string|null, sort: array{column: string, direction: string}|null, trashed: bool, trashed_allowed: bool, filters: array<string, mixed>},
      * }
      */
     public function toArray(): array
     {
-        $trashed = filter_var($this->request->input(DataTableConfig::getTrashedKey()), FILTER_VALIDATE_BOOLEAN)
-            && Archive::available($this->allowTrashed, $this->query->getModel(), $this->trashedAbility);
+        $trashedAllowed = Archive::available($this->allowTrashed, $this->query->getModel(), $this->trashedAbility);
+        $trashed = $trashedAllowed
+            && filter_var($this->request->input(DataTableConfig::getTrashedKey()), FILTER_VALIDATE_BOOLEAN);
 
         // Spatie sorts and paginates the very builder it is given, so work on a copy: the
         // caller's builder stays as it was, and toArray() can be called again.
@@ -252,6 +253,7 @@ class QueryBuilderTable
                     ? ['column' => $sortKey, 'direction' => $sortDirection]
                     : null,
                 'trashed' => $trashed,
+                'trashed_allowed' => $trashedAllowed,
                 'filters' => $filters,
             ],
             'params' => DataTableConfig::requestKeys(),

@@ -132,7 +132,7 @@ const handleRestoreRecord = (id: number | string) => {
         <GlobalSearch v-if="globalSearch" :prop-name="propName" />
 
         <TrashedRecords
-            v-if="showTrashed"
+            v-if="showTrashed && dataTable.trashedAllowed !== false"
             :prop-name="propName"
             :trashed-key="trashedKey()"
             :trashed="isTrashed()"

@@ -50,6 +50,8 @@ export interface LaravelDataTableState {
     search?: string;
     sort?: { column: string; direction: string } | null;
     trashed?: boolean;
+    /** Whether this user may see the archive at all (v4.2+): show the toggle only then. */
+    trashed_allowed?: boolean;
     /** The column filters as applied (v4.1+); PHP sends an empty one as `[]`. */
     filters?: Record<string, LaravelDataTableFilterValue> | [];
 }
@@ -391,7 +393,14 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
      * data could be triggered from another site). The route redirects back,
      * so the table and the page's flash messages come back fresh.
      */
-    function onRestore(id: number | string): void {
+    // The row being restored, while its POST runs: buttons can show it and a
+    // second click (or a click on another row) waits, instead of a 404.
+    const restoringId = ref<number | string | null>(null);
+
+    // An older server says nothing: the archive is up to the page then.
+    const trashedAllowed = computed(() => payload.value.state?.trashed_allowed ?? true);
+
+    function onRestore(id: number | string, visitOptions: Partial<VisitOptions> = {}): void {
         const restoreUrl = options.restoreUrl;
 
         if (restoreUrl === undefined) {
@@ -400,9 +409,23 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
             return;
         }
 
-        const url = typeof restoreUrl === "function" ? restoreUrl(id) : replacePlaceholder(restoreUrl, id);
+        if (restoringId.value !== null) {
+            return;
+        }
 
-        router.post(url, {}, { preserveState: true, preserveScroll: true });
+        const url = typeof restoreUrl === "function" ? restoreUrl(id) : replacePlaceholder(restoreUrl, id);
+        restoringId.value = id;
+
+        router.post(url, {}, {
+            preserveState: true,
+            preserveScroll: true,
+            ...visitOptions,
+            // Always released, whatever the visit's end (success, error, cancel).
+            onFinish: (visit) => {
+                restoringId.value = null;
+                visitOptions.onFinish?.(visit);
+            },
+        });
     }
 
     // ----- Column filters ----------------------------------------------------------
@@ -613,6 +636,8 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         perPageOptions,
         onPerPageChange,
         trashed,
+        trashedAllowed,
+        restoringId,
         onTrashedChange,
         onRestore,
         goToPage,

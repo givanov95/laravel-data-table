@@ -433,6 +433,83 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
     }
 
+    public function testRestoreRecordReturnsTheRecordAndLeavesTheResponseToTheApp(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
+
+        $record = (new DataTable(Post::query(), Request::create('/', 'POST')))->allowTrashed()->restoreRecord(2);
+
+        $this->assertInstanceOf(Post::class, $record);
+        $this->assertSame(2, $record->id);
+        $this->assertFalse($record->trashed());
+        $this->assertNull(session('success'));
+    }
+
+    public function testBeforeRunsAfterTheChecksAndCanSetAttributesOrRefuse(): void
+    {
+        Post::find(2)->delete();
+        Post::find(3)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
+        $seen = [];
+        $table = fn () => (new DataTable(Post::query()->where('author_id', 1), Request::create('/', 'POST')))->allowTrashed();
+
+        // Not in the table: a 404 before $before runs.
+        $this->assertNotFound(fn () => $table()->restoreRecord(3, before: function ($record) use (&$seen) {
+            $seen[] = $record->id;
+        }));
+        $this->assertSame([], $seen);
+
+        // Attributes set in $before are saved by the restore itself.
+        $table()->restore(2, before: fn (Post $post) => $post->status = 'approved');
+        $this->assertSame('approved', Post::find(2)->status);
+        $this->assertNull(Post::find(2)->deleted_at);
+
+        // $before refuses: nothing is restored.
+        Post::find(2)->delete();
+
+        try {
+            $table()->restoreRecord(2, before: fn () => throw \Illuminate\Validation\ValidationException::withMessages(['seats' => 'Full']));
+            $this->fail('$before must be able to refuse.');
+        } catch (\Illuminate\Validation\ValidationException) {
+        }
+
+        $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
+    }
+
+    public function testBeforeDoesNotRunWhenThePolicyRefuses(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, DenyingPostPolicy::class);
+        $ran = false;
+
+        try {
+            (new DataTable(Post::query(), Request::create('/', 'POST')))
+                ->allowTrashed()
+                ->restoreRecord(2, before: function () use (&$ran) {
+                    $ran = true;
+                });
+            $this->fail('The policy must refuse.');
+        } catch (AuthorizationException) {
+        }
+
+        $this->assertFalse($ran);
+    }
+
+    public function testThePayloadSaysWhetherTheArchiveIsAllowed(): void
+    {
+        $allowed = fn (DataTable $table) => $table->setColumn('id', '#')->process()->toArray()['state']['trashed_allowed'];
+
+        $this->assertFalse($allowed(new DataTable(Post::query(), Request::create('/'))));
+        $this->assertTrue($allowed((new DataTable(Post::query(), Request::create('/')))->allowTrashed()));
+        $this->assertFalse($allowed((new DataTable(Author::query(), Request::create('/')))->allowTrashed()));
+
+        Gate::define('viewArchive', fn (?object $user): bool => false);
+        $table = (new DataTable(Post::query(), Request::create('/')))->allowTrashed(ability: 'viewArchive')->setColumn('id', '#')->process();
+        $this->assertFalse($table->toArray()['state']['trashed_allowed']);
+        $this->assertFalse($table->trashedAllowed);
+    }
+
     private function assertNotFound(callable $restore): void
     {
         try {

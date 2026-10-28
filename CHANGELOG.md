@@ -1,5 +1,24 @@
 # Changelog
 
+## v4.2.0
+
+### Added
+- `DataTable::restoreRecord($id, $scope = null, $before = null)`: the same checks as `restore()`
+  (404 outside the table or without an archive, the `allowTrashed()` ability, the `restore`
+  policy), then `$before($record)`, then the restore, and it returns the record, leaving the
+  response and its message to the app. `restore()` takes `$before` too (#48).
+- `$before` is the place for the app's own rules: it runs after the 404/403 checks, can refuse by
+  throwing (a `ValidationException`), and attributes it sets are saved by the restore itself.
+- `state.trashed_allowed` (`DataTable` and `QueryBuilderTable`) and `trashedAllowed` in
+  `DataTable`'s default serialization: whether this user may see the archive at all.
+  `ServerDataTable` and the bundled `DataTable` component show the archive toggle only then.
+- Composable: `trashedAllowed`, `restoringId` (the row being restored until its POST ends; a
+  second click meanwhile does nothing) and `onRestore(id, visitOptions)` passing the page's
+  `onSuccess` / `onError` / `onFinish`.
+
+### Deprecated
+- `SoftRestorer`: `restore()` and `restoreRecord()` no longer use it.
+
 ## v4.1.1
 
 ### Fixed

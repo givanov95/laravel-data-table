@@ -76,6 +76,8 @@ const props = withDefaults(defineProps<{
   onTrashedChange: (value: boolean) => void
   goToPage: (page: number) => void
   showTrashed?: boolean
+  /** From the composable (v4.2+): the toggle shows only when the server allows the archive. */
+  trashedAllowed?: boolean
   /** Default: t("Search…"). */
   searchPlaceholder?: string
   /** Default: t("No results."). */
@@ -311,7 +313,7 @@ const showTrailingJump = computed(() => currentPage.value + PAGE_RANGE < lastPag
       <slot name="toolbar" :table="table" />
 
       <div class="ml-auto flex items-center gap-4">
-        <div v-if="showTrashed" class="flex items-center gap-2">
+        <div v-if="showTrashed && trashedAllowed !== false" class="flex items-center gap-2">
           <Switch
             :id="trashedId"
             :model-value="trashed"

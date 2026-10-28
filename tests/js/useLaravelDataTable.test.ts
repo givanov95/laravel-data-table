@@ -383,8 +383,39 @@ describe("useLaravelDataTable", () => {
         table.onRestore(7);
 
         expect(get).not.toHaveBeenCalled();
-        expect(post).toHaveBeenCalledWith("/posts/7/restore", {}, { preserveState: true, preserveScroll: true });
+        expect(post).toHaveBeenCalledWith("/posts/7/restore", {}, expect.objectContaining({ preserveState: true, preserveScroll: true }));
         expect(replace).not.toHaveBeenCalled();
+    });
+
+    it("holds the row being restored until the POST ends, and takes the page's visit options", () => {
+        const onSuccess = vi.fn();
+        const onFinish = vi.fn();
+        const { table } = setup(payload(), { restoreUrl: "/posts/?id/restore" });
+
+        table.onRestore(7, { onSuccess, onFinish });
+        expect(table.restoringId).toBe(7);
+
+        // A second click while the first runs does nothing.
+        table.onRestore(8);
+        expect(post).toHaveBeenCalledOnce();
+
+        const options = post.mock.calls[0][2];
+        expect(options).toMatchObject({ preserveState: true, preserveScroll: true, onSuccess });
+        options.onFinish({});
+
+        expect(table.restoringId).toBeNull();
+        expect(onFinish).toHaveBeenCalledOnce();
+    });
+
+    it("says whether the server allows the archive", async () => {
+        const { table, data } = setup(payload());
+
+        // An older server says nothing: allowed.
+        expect(table.trashedAllowed).toBe(true);
+
+        data.value = payload({ state: { search: "", sort: null, trashed: false, trashed_allowed: false } });
+        await nextTick();
+        expect(table.trashedAllowed).toBe(false);
     });
 
     it("takes restoreUrl as a function of the id", () => {

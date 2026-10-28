@@ -85,6 +85,12 @@ describe("DataTable archive", () => {
         expect(get).toHaveBeenCalledWith("/items/A-1");
     });
 
+    it("hides the archive toggle when the server does not allow the archive", () => {
+        const wrapper = mountTable(payload({ trashed: false, trashedAllowed: false }), { showTrashed: true, globalSearch: true });
+
+        expect(wrapper.find("label[for='yes_filter[trashed]']").exists()).toBe(false);
+    });
+
     it("has no restore button without restoreUrl", () => {
         const wrapper = mountTable(payload({ trashed: true }));
 

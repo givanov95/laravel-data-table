@@ -9,6 +9,8 @@ use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
 use Givanov95\DataTable\Support\DateSqlExpression;
 use Givanov95\DataTable\Support\LikeExpression;
+use Givanov95\DataTable\Support\PostgresColumns;
+use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
@@ -205,7 +207,7 @@ final class ColumnFilter
         $boolean = $useOrWhere ? 'or' : 'and';
 
         if ($exact) {
-            $builder->where($column, '=', $price, $boolean);
+            $this->whereEquals($builder, $column, $price, $boolean);
 
             return;
         }
@@ -225,29 +227,97 @@ final class ColumnFilter
         if ($column instanceof RelationColumn) {
             $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
             $builder->{$method}($column->relationString, function ($query) use ($column, $filterValue, $exact) {
-                if ($exact && ! self::fitsColumn($query->getModel(), $column->relationColumn, $filterValue)) {
-                    $query->whereRaw('1 = 0');
-
-                    return;
-                }
-
-                $this->whereColumnMatches($query, $column->relationColumn, $filterValue, $exact);
+                $this->whereColumnMatches(
+                    $query,
+                    $query->getModel()->getTable().'.'.$column->relationColumn,
+                    $filterValue,
+                    $exact,
+                );
             });
 
             return;
         }
 
-        if ($exact && ! self::fitsColumn($builder->getModel(), $columnKey, $filterValue)) {
-            // `id = 'abc'` is an error on PostgreSQL (22P02), not "no match", so
-            // the column matches nothing without asking the database. Added with
-            // the same boolean, so a search whose every column is skipped is not
-            // an empty group (which Laravel drops: every row would match).
-            $builder->whereRaw('1 = 0', [], $useOrWhere ? 'or' : 'and');
+        $this->whereColumnMatches($builder, "{$table}.{$columnKey}", $filterValue, $exact, $useOrWhere ? 'or' : 'and');
+    }
 
-            return;
+    /**
+     * `column = value`, without handing the database a value its column type
+     * rejects: PostgreSQL fails the whole query (`id = 'abc'` is 22P02, a uuid,
+     * boolean or date column the same, a number past an `integer` 22003)
+     * where MySQL and SQLite just find nothing. A value the column cannot
+     * hold matches nothing; anything else is the usual typed comparison, so
+     * results and indexes stay as they were.
+     *
+     * The false clause takes the same boolean, so a global search whose every
+     * column is left out is not an empty group (which Laravel drops: every row
+     * would match).
+     *
+     * @param string $column table-qualified (`posts.id`)
+     */
+    private function whereEquals(Builder $query, string $column, mixed $value, string $boolean = 'and'): void
+    {
+        $name = (string) str($column)->afterLast('.');
+        $connection = $query->getQuery()->getConnection();
+
+        match (self::acceptance($connection, $query->getModel(), $name, $value)) {
+            true => $query->where($column, '=', $value, $boolean),
+            false => $query->whereRaw('1 = 0', [], $boolean),
+            // A PostgreSQL type not known here (jsonb, inet, an array…): as text.
+            null => $query->whereRaw(
+                'CAST('.$connection->getQueryGrammar()->wrap($column).' AS TEXT) = ?',
+                [(string) $value],
+                $boolean,
+            ),
+        };
+    }
+
+    /**
+     * Whether `column = value` can be sent: true, false (the column cannot
+     * hold the value), or null (PostgreSQL, a type not known here: compare as
+     * text). On PostgreSQL the column's real type decides (read from the
+     * schema); elsewhere, and when the schema cannot be read, its cast does
+     * (see fitsColumn()).
+     *
+     * @internal
+     */
+    public static function acceptance(Connection $connection, Model $model, string $column, mixed $value): ?bool
+    {
+        if (! is_scalar($value)) {
+            return false;
         }
 
-        $this->whereColumnMatches($builder, "{$table}.{$columnKey}", $filterValue, $exact, $useOrWhere ? 'or' : 'and');
+        if ($connection->getDriverName() === 'pgsql') {
+            // Inside a self-referencing whereHas the table is an alias (laravel_reserved_0).
+            $table = $model->getTable();
+            $table = str_starts_with($table, 'laravel_reserved_') ? (new ($model::class))->getTable() : $table;
+            $type = PostgresColumns::types($connection, $table)[$column] ?? null;
+
+            if ($type !== null) {
+                return PostgresColumns::accepts($type, (string) $value);
+            }
+        }
+
+        return self::fitsColumn($model, $column, $value);
+    }
+
+    /**
+     * `int` or `decimal` for a column numeric by its cast (or an integer
+     * primary key, which Laravel casts to int), null otherwise.
+     */
+    private static function numericCast(Model $model, string $column): ?string
+    {
+        $cast = $model->getCasts()[$column] ?? null;
+
+        if ($cast === null && $column === $model->getKeyName() && in_array($model->getKeyType(), ['int', 'integer'], true)) {
+            $cast = 'int';
+        }
+
+        return match (is_string($cast) ? strtolower(explode(':', $cast)[0]) : null) {
+            'int', 'integer' => 'int',
+            'float', 'double', 'real', 'decimal' => 'decimal',
+            default => null,
+        };
     }
 
     /**
@@ -264,21 +334,13 @@ final class ColumnFilter
      */
     public static function fitsColumn(Model $model, string $column, mixed $value): bool
     {
-        $cast = $model->getCasts()[$column] ?? null;
-
-        if ($cast === null && $column === $model->getKeyName() && in_array($model->getKeyType(), ['int', 'integer'], true)) {
-            $cast = 'int';
-        }
-
-        $cast = is_string($cast) ? strtolower(explode(':', $cast)[0]) : null;
-
-        return match ($cast) {
-            'int', 'integer' => filter_var(
+        return match (self::numericCast($model, $column)) {
+            'int' => filter_var(
                 $value,
                 FILTER_VALIDATE_INT,
                 ['options' => ['min_range' => -2147483648, 'max_range' => 2147483647]],
             ) !== false,
-            'float', 'double', 'real', 'decimal' => is_numeric($value) && is_finite((float) $value),
+            'decimal' => is_numeric($value) && is_finite((float) $value),
             default => true,
         };
     }
@@ -291,7 +353,7 @@ final class ColumnFilter
         string $boolean = 'and',
     ): void {
         if ($exact) {
-            $query->where($column, '=', $filterValue, $boolean);
+            $this->whereEquals($query, $column, $filterValue, $boolean);
 
             return;
         }

@@ -29,6 +29,8 @@ abstract class TestCase extends Orchestra
 
     protected function tearDown(): void
     {
+        \Givanov95\DataTable\Support\PostgresColumns::flush();
+
         if (self::driver() !== 'sqlite') {
             Schema::dropAllTables();
         }

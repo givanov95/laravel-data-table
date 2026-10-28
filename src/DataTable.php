@@ -63,6 +63,9 @@ class DataTable
     /** Whether the rows are the archive (soft-deleted ones), as applied. */
     public bool $trashed = false;
 
+    /** The model's key (`getKeyName()`): which field of a row identifies it, for the bundled widget. */
+    public string $keyName = 'id';
+
     /** @var Collection<string, EnumColumn> */
     private Collection $enumColumns;
 
@@ -102,6 +105,7 @@ class DataTable
         $this->request = $request ?? App::make(Request::class);
         // The model's key, not `id`: a model keyed on `uid` has no `id` column.
         $this->ordering = Ordering::fromRequest($this->request, $builder->getModel()->getKeyName());
+        $this->keyName = $builder->getModel()->getKeyName();
 
         $this->setBuilder($builder);
     }
@@ -211,8 +215,8 @@ class DataTable
             });
         }
 
-        // `/posts/abc/restore` on an integer key is a 404, not a type error (22P02) from PostgreSQL.
-        if (! ColumnFilter::fitsColumn($model, $model->getKeyName(), $id)) {
+        // `/posts/abc/restore` on an integer or uuid key is a 404, not a type error (22P02) from PostgreSQL.
+        if (ColumnFilter::acceptance($builder->getQuery()->getConnection(), $model, $model->getKeyName(), $id) === false) {
             throw (new ModelNotFoundException())->setModel($model::class, [$id]);
         }
 

@@ -46,6 +46,8 @@ export interface DataTable<TData = Record<string, unknown>> {
     requestKeys?: RequestKeys;
     /** Whether the rows are the archive, as the server applied it (v4+). */
     trashed?: boolean;
+    /** The model's key, the field that identifies a row (v4.0.1+; `id` otherwise). */
+    keyName?: string;
 }
 
 export interface FilterValues extends Record<string, unknown> {

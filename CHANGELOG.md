@@ -1,5 +1,24 @@
 # Changelog
 
+## v4.0.1
+
+### Fixed
+- An `exactMatch` column no longer hands PostgreSQL a value its type rejects (a 500). 4.0.0 guarded
+  only the columns numeric by their cast; a uuid key, a boolean or date cast, a number without a
+  cast or a float cast over an `integer` column still failed. On PostgreSQL the column's real type
+  is now read from the schema (once per table and process) and a term it cannot hold matches
+  nothing; any other keeps the typed comparison (`flag = '1'`, `total = '19.99'` match as before,
+  indexes still apply). A type not known here (`jsonb`, arrays) is compared as text. MySQL and
+  SQLite are unchanged. A value that is not a scalar matches nothing.
+- An exact price match goes through the same check, so a long number in the search box (a phone
+  number, an IBAN) is not a 22003 on an `integer` price column.
+- `DataTable::restore()` with an id that cannot be the key (`abc` for a uuid key) is a 404 on
+  PostgreSQL, not a 22P02.
+- The bundled `DataTable` component identifies a row by the model's key: the payload carries
+  `keyName` (`getKeyName()`), and the new `row-key` prop overrides it. `?id` in `rowClickLink` and
+  `restoreUrl` was always filled from `id`, so a model keyed on `uid` posted to
+  `/…/undefined/restore`.
+
 ## v4.0.0
 
 ### Breaking

@@ -1,5 +1,12 @@
 # Changelog
 
+## v4.2.1
+
+### Fixed
+- The composable moves to the last page when the current one no longer exists, e.g. after the
+  last row of the last page was deleted and a redirect brought back `?page=N`. Laravel answers such
+  a page with no rows, and `ServerDataTable` then had no pager to leave it (#51).
+
 ## v4.2.0
 
 ### Added

@@ -448,6 +448,20 @@ describe("useLaravelDataTable", () => {
         warn.mockRestore();
     });
 
+    it("moves to the last page when the current one no longer exists", async () => {
+        page.url = "/roles?page=3&filter%5Bglobal%5D=al";
+        const { data } = setup(payload({ meta: { current_page: 3, per_page: 20, total: 40, last_page: 2, from: 0, to: 0 } }));
+
+        expect(lastQuery()).toEqual({ page: "2", "filter[global]": "al" });
+        expect(lastOptions()).toMatchObject({ replace: true });
+
+        // An empty list stays on page 1, with no visit.
+        get.mockReset();
+        data.value = payload({ meta: { current_page: 1, per_page: 20, total: 0, last_page: 1, from: 0, to: 0 } });
+        await nextTick();
+        expect(get).not.toHaveBeenCalled();
+    });
+
     it("reloads the payload prop and the props the page asks for", () => {
         const { table } = setup(payload(), { propName: "posts", alsoReload: ["filters"] });
 

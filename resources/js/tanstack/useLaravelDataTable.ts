@@ -615,6 +615,19 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         visit({ page: pageNumber });
     }
 
+    // A page that no longer exists (the last row of the last page was deleted,
+    // or an old link): go to the last one, in place of this history entry.
+    // Laravel does not clamp the page; it answers with no rows.
+    watch(
+        () => [meta.value.current_page, meta.value.last_page, meta.value.total] as const,
+        ([current, last, total]) => {
+            if (total > 0 && last >= 1 && current > last) {
+                visit({ page: last }, { replace: true });
+            }
+        },
+        { immediate: true },
+    );
+
     function onPaginationChange(updaterOrValue: Updater<PaginationState>): void {
         const next = typeof updaterOrValue === "function" ? updaterOrValue(pagination.value) : updaterOrValue;
 

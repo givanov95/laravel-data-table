@@ -8,6 +8,7 @@ use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Columns\TranslatableColumn;
 use Givanov95\DataTable\DataTable;
 use Givanov95\DataTable\Exceptions\UnsupportedRelationException;
+use Illuminate\Database\Eloquent\Casts\AsStringable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -122,13 +123,13 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame(['Банан', 'Круша', 'Ябълка'], $table->getData()->pluck('title')->all());
     }
 
-    public function testShowsTheTranslationWhenTheLocaleIsCastToAnEnum(): void
+    public function testShowsTheTranslationWhenTheTranslationModelCastsItsLocaleOrKey(): void
     {
-        RlShop::resolveRelationUsing('enumTranslations', fn (RlShop $shop) => $shop->morphMany(RlEnumTranslation::class, 'translatable'));
-        Config::set('data-table.translatable_relation', 'enumTranslations');
+        Config::set('data-table.translatable_relation', 'castTranslations');
 
+        // The locale cast to an enum, the key to a value object; the column takes an enum too.
         $table = (new DataTable(RlShop::query(), $this->request([])))
-            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title'))
+            ->setTranslatableColumn(new TranslatableColumn(RlLocale::Bg, 'title', 'Title'))
             ->process();
 
         $this->assertSame(['Банан', 'Круша', 'Ябълка'], $table->getData()->pluck('title')->all());
@@ -293,6 +294,11 @@ class RlShop extends Model
         return $this->morphMany(RlTranslation::class, 'translatable');
     }
 
+    public function castTranslations(): MorphMany
+    {
+        return $this->morphMany(RlCastTranslation::class, 'translatable');
+    }
+
     public function texts(): MorphMany
     {
         return $this->morphMany(RlText::class, 'owner');
@@ -355,7 +361,7 @@ enum RlLocale: string
     case Bg = 'bg';
 }
 
-class RlEnumTranslation extends Model
+class RlCastTranslation extends Model
 {
     protected $table = 'translations';
 
@@ -363,5 +369,5 @@ class RlEnumTranslation extends Model
 
     public $timestamps = false;
 
-    protected $casts = ['locale' => RlLocale::class];
+    protected $casts = ['locale' => RlLocale::class, 'key' => AsStringable::class];
 }

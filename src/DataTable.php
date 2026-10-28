@@ -167,10 +167,11 @@ class DataTable
                 $locale = $translatableColumn->getLocale();
 
                 // The column's locale: with several loaded, the first one found was shown.
-                // By value: the translation model may cast its locale (or key) to an enum.
+                // On the stored values: the translation model may cast its locale or key
+                // (to an enum, a value object), which would never equal the column's text.
                 $translation = optional($item->{$relation})->first(
-                    fn ($translation) => self::plain($translation->{$keyColumn}) == $key
-                        && self::plain($translation->{$localeColumn}) == $locale,
+                    fn (Model $translation) => (string) ($translation->getAttributes()[$keyColumn] ?? '') === (string) $key
+                        && (string) ($translation->getAttributes()[$localeColumn] ?? '') === (string) $locale,
                 );
 
                 if ($translation) {
@@ -239,16 +240,6 @@ class DataTable
         $record = $builder->onlyTrashed()->findOrFail($id);
 
         return (new SoftRestorer($record))->restore();
-    }
-
-    /** An enum as its value (a backed one) or its name; anything else as it is. */
-    private static function plain(mixed $value): mixed
-    {
-        return match (true) {
-            $value instanceof \BackedEnum => $value->value,
-            $value instanceof \UnitEnum => $value->name,
-            default => $value,
-        };
     }
 
     /**

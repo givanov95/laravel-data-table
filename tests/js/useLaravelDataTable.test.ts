@@ -344,6 +344,20 @@ describe("useLaravelDataTable", () => {
             expect(table.filters).toEqual({ status: ["paid", "open"] });
         });
 
+        it("keeps a trailing space the server trimmed, so the next word is not glued on", async () => {
+            const { table, data } = setup(filtered(), { searchDebounceMs: 300 });
+
+            table.setColumnFilter("author.name", "team ");
+            vi.advanceTimersByTime(300);
+            const sent = lastOptions();
+
+            data.value = filtered({ filters: { "author.name": "team" } });
+            await nextTick();
+            sent.onFinish();
+
+            expect(table.filters).toEqual({ "author.name": "team " });
+        });
+
         it("takes TanStack's column filters, by column id", () => {
             const { table } = setup(filtered());
 

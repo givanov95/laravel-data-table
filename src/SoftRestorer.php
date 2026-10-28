@@ -8,6 +8,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\RedirectResponse;
 
+/**
+ * @deprecated 4.2 DataTable::restore() and restoreRecord() restore without it.
+ */
 final class SoftRestorer
 {
     use AuthorizesRequests;

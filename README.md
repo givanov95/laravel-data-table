@@ -373,7 +373,9 @@ $table->allowTrashed(ability: 'viewArchive');    // Gate::allows('viewArchive', 
 With an ability, users the gate refuses get the live rows (the parameter is
 ignored, not a 403). A model without `SoftDeletes` never shows an archive, so
 calling `allowTrashed()` on it is harmless. `toArray()['state']['trashed']` (and
-`$table->trashed` in the default serialization) is what was applied.
+`$table->trashed` in the default serialization) is what was applied, and
+`state.trashed_allowed` (`$table->trashedAllowed`) whether this user may see the
+archive at all: the bundled components show the archive toggle only then.
 
 Restoring is a POST route of the app, never a query parameter of the list (a
 GET that changes data can be triggered from another site). Build the table the
@@ -397,6 +399,21 @@ checks the `restore` policy (`authorize('restore', $record)`), restores the
 record and redirects back with a `success` flash message. It is a 404 when the
 table has no `allowTrashed()` or the model has no `SoftDeletes`, and a 403 when
 the ability of `allowTrashed()` refuses.
+
+The app's own rules go in `$before`, which runs after all those checks, with the
+record, right before it is restored. It can refuse by throwing, and attributes
+it sets are saved by the restore in the same write. `restoreRecord()` does the
+same and returns the record, leaving the response (and its message) to the app:
+
+```php
+$staff = $table->restoreRecord($id, before: function (Staff $staff) use ($business) {
+    if (! $business->hasFreeStaffSeat()) {
+        throw ValidationException::withMessages(['staff' => __('No free seat on the plan.')]);
+    }
+});
+
+return back()->with('success', __('Staff member restored.'));
+```
 
 On the frontend, pass the route to the composable (`restoreUrl`) or to the
 `DataTable` component (`restore-url`); see below.
@@ -560,8 +577,11 @@ const columns: DataTableColumnDef<Row>[] = [
 `dataTable`), `alsoReload` (other props to refresh with the table, e.g. the
 page's own filters), `searchDebounceMs` (1200), `perPageOptions`
 (`[10, 20, 50, 100]`; the applied size is always offered) and `restoreUrl`
-(`'/posts/?id/restore'` or `(id) => route('posts.restore', id)`): `onRestore(id)`
-POSTs there and does nothing without it. The table follows
+(`'/posts/?id/restore'` or `(id) => route('posts.restore', id)`): `onRestore(id, visitOptions?)`
+POSTs there (with the page's own `onSuccess` / `onError` / `onFinish`, if given) and
+does nothing without it. `restoringId` holds the row being restored until its POST
+ends, so a button can show it; a second click meanwhile does nothing.
+`trashedAllowed` says whether the server allows this user the archive. The table follows
 the server's applied state (`state.sort`, `state.search`, `state.trashed`), so
 back/forward and shared links stay right; a new sort, page size, search or
 archive goes back to page 1. `clearSearch(data)` empties the search box and

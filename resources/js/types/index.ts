@@ -46,6 +46,8 @@ export interface DataTable<TData = Record<string, unknown>> {
     requestKeys?: RequestKeys;
     /** Whether the rows are the archive, as the server applied it (v4+). */
     trashed?: boolean;
+    /** Whether this user may see the archive at all (v4.2+). */
+    trashedAllowed?: boolean;
     /** The model's key, the field that identifies a row (v4.0.1+; `id` otherwise). */
     keyName?: string;
 }

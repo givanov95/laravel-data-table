@@ -26,6 +26,14 @@
   `LaravelDataTableParams`.
 
 ### Added
+- **The search reads dates in the user's time zone.** The composable sent the browser's zone with
+  every search (`filter[timeZone]`), but the server never read it. It is now a request key
+  (`time_zone`, by default next to `global_filter`, also in `toArray()['params']`) and
+  `DataTableParams::$timeZone` (a zone PHP does not know is ignored). For a date column with a time:
+  `d.m.Y` finds the rows of that day in the user's zone and the new `d.m.Y H:i` / `d.m.Y H:i:s` the
+  rows of that minute / second, as a range on the stored value; `H:i` is moved to the server's zone.
+  A date alone is no longer moved with the current time of day, which could land on the day before
+  or after. `QueryBuilderTable` accepts the configured zone key under Spatie's filter parameter.
 - The default serialization of `DataTable` (the bundled `DataTable` component's payload) carries
   `requestKeys` and `trashed`. The component and its archive toggle read the `trashed` key from
   there instead of a hard-coded `filter[trashed]`, and whether the rows are archived from the

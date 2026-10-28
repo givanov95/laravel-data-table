@@ -15,6 +15,7 @@ final class DataTableParams
         public ?string $globalFilter = null,
         public int $perPage = 15,
         public ?string $trashed = null,
+        public ?string $timeZone = null,
     ) {
     }
 
@@ -33,6 +34,9 @@ final class DataTableParams
                 DataTableConfig::getMaxPerPage(),
             ),
             trashed: self::scalarToString($request->input(DataTableConfig::getTrashedKey())),
+            // The browser's zone, sent with the search: dates and times typed in
+            // the search box are the user's. One PHP does not know is ignored.
+            timeZone: DateTimeHelper::zone($request->input(DataTableConfig::getTimeZoneKey()))?->getName(),
         );
     }
 

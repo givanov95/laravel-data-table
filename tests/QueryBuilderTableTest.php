@@ -256,6 +256,16 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(2, $payload['meta']['total']);
     }
 
+    public function testTheTimeZoneKeyUnderTheFilterParameterIsAccepted(): void
+    {
+        Config::set('data-table.time_zone', 'filter.tz');
+
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => 'Apples', 'tz' => 'Europe/Sofia']]))->toArray();
+
+        $this->assertCount(1, $payload['data']);
+        $this->assertSame('filter.tz', $payload['params']['time_zone']);
+    }
+
     public function testTrashedOnAModelWithoutSoftDeletesIsIgnored(): void
     {
         $payload = QueryBuilderTable::for(QbtPlainArticle::query(), Request::create('/', 'GET', ['filter' => ['trashed' => 'true']]))

@@ -398,6 +398,7 @@ final class DataTableAdvancedFeaturesTest extends TestCase
             'global_filter' => 'filter.search',
             'trashed'       => 'filter.trashed',
             'ordering'      => 'ordering',
+            'time_zone'     => 'filter.timeZone',
         ], $params);
     }
 

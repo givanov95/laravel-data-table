@@ -69,10 +69,18 @@ final class ColumnFilter
         string $table,
     ): void {
         $dateColumn = $this->dataTable->getDateColumns()->get($columnKey);
-        $clientTZ = new DateTimeZone($timeZone ?: date_default_timezone_get());
         $serverTZ = new DateTimeZone(date_default_timezone_get());
+        $clientTZ = DateTimeHelper::zone($timeZone) ?? $serverTZ;
 
         $helper = new DateTimeHelper($dateColumn, $clientTZ, $serverTZ, (string) $filterValue);
+        $range = $helper->range();
+
+        if ($range !== null) {
+            $this->whereInRange($builder, $column, $columnKey, $range, $useOrWhere, $table);
+
+            return;
+        }
+
         $convertedDate = $helper->convert()->convertedDate;
 
         if (! $convertedDate) {
@@ -101,6 +109,37 @@ final class ColumnFilter
         $builder->{$method}(function ($query) use ($table, $columnKey, $helper, $operator, $value) {
             $this->whereDateFormatted($query, "{$table}.{$columnKey}", $helper->format, $operator, $value);
         });
+    }
+
+    /**
+     * `from <= column < to` on the stored value: the same on every driver, and
+     * it can use an index.
+     *
+     * @param array{0: string, 1: string} $range
+     */
+    private function whereInRange(
+        Builder $builder,
+        $column,
+        string $columnKey,
+        array $range,
+        bool $useOrWhere,
+        string $table,
+    ): void {
+        $between = static function (Builder $query, string $qualified) use ($range): void {
+            $query->where($qualified, '>=', $range[0])->where($qualified, '<', $range[1]);
+        };
+
+        if ($column instanceof RelationColumn) {
+            $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
+            $builder->{$method}($column->relationString, function ($query) use ($column, $between) {
+                $between($query, $query->getModel()->getTable().'.'.$column->relationColumn);
+            });
+
+            return;
+        }
+
+        $method = $useOrWhere ? 'orWhere' : 'where';
+        $builder->{$method}(fn ($query) => $between($query, "{$table}.{$columnKey}"));
     }
 
     private function whereDateFormatted(

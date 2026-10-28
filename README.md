@@ -72,6 +72,7 @@ return [
     'per_page'      => 'perPage',
     'trashed'       => 'filter.trashed',
     'ordering'      => 'ordering',
+    'time_zone'     => null,   // null: next to global_filter (filter.timeZone)
 
     'default_per_page' => 15,
     'max_per_page'     => 100,
@@ -237,6 +238,22 @@ $table->setPriceColumn('price');
 // Date filtering with timezone-aware parsing
 $table->setDateColumn('created_at', 'd.m.Y H:i:s');
 ```
+
+The search box takes a date column as `d.m.Y`, `d.m`, `H:i`, `H:i:s`,
+`d.m.Y H:i` or `d.m.Y H:i:s` (with the column's delimiters). The composable
+sends the browser's time zone with the search (`time_zone` key), and for a
+column whose format has a time (`H`), what the user types is read in that zone:
+
+- `d.m.Y` finds the rows of that day in the user's zone (a row at 23:30 UTC is
+  found by the next day's date in Sofia), `d.m.Y H:i` the rows of that minute.
+  These compare the stored value (`>=` / `<`), on every driver.
+- `H:i` / `H:i:s` are moved to the server's zone with today's offset.
+- `d.m` (no year) and the columns without a time in their format are compared
+  as typed, in the server's zone.
+
+The server's zone is `app.timezone`; the stored values are taken to be wall-clock
+times in it. A zone PHP does not know (a typo, or an old alias such as
+`Europe/Kiev` on some PHP builds) is ignored: the server's zone is used.
 
 #### Supported databases
 

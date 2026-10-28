@@ -462,7 +462,13 @@ class DataTable
         mixed $filterValue,
         bool $useOrWhere = false,
     ): self {
-        $columnFilter = $this->columnFilter->apply($queryBuilder, $columnKey, $filterValue, $useOrWhere);
+        $columnFilter = $this->columnFilter->apply(
+            $queryBuilder,
+            $columnKey,
+            $filterValue,
+            $useOrWhere,
+            $this->params->timeZone,
+        );
         $this->setBuilder($columnFilter->getBuilder());
 
         return $this;
@@ -845,7 +851,7 @@ class DataTable
      *       'meta'    => [ current_page, per_page, total, last_page, from, to ],
      *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
      *       'state'   => [ search, sort => [column, direction] | null, trashed ],
-     *       'params'  => [ per_page, global_filter, trashed, ordering ],   // request keys
+     *       'params'  => [ per_page, global_filter, trashed, ordering, time_zone ],   // request keys
      *     ]
      *
      * Call it explicitly (`->process()->toArray()`); the default serialization

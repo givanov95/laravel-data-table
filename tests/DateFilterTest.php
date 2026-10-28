@@ -118,6 +118,66 @@ final class DateFilterTest extends TestCase
         $this->assertCount(1, $table->getData());
     }
 
+    public function testAWholeDateIsTheDayInTheUsersTimeZone(): void
+    {
+        // 23:30 UTC on the 27th is 01:30 on the 28th in Sofia (UTC+2 after the 25th).
+        DateFilterEvent::create(['starts_at' => '2026-10-27 23:30:00']);
+
+        $this->assertSame([4], $this->searchIds('28.10.2026', 'Europe/Sofia'));
+        $this->assertSame([], $this->searchIds('27.10.2026', 'Europe/Sofia'));
+
+        // Without a zone (or with one PHP does not know), the server's: UTC.
+        $this->assertSame([4], $this->searchIds('27.10.2026'));
+        $this->assertSame([4], $this->searchIds('27.10.2026', 'Not/AZone'));
+    }
+
+    public function testADateAndTimeIsTheMinuteInTheUsersTimeZone(): void
+    {
+        DateFilterEvent::create(['starts_at' => '2026-10-27 23:30:00']);
+
+        $this->assertSame([4], $this->searchIds('28.10.2026 01:30', 'Europe/Sofia'));
+        $this->assertSame([4], $this->searchIds('27.10.2026 23:30:00'));
+        $this->assertSame([], $this->searchIds('28.10.2026 01:31', 'Europe/Sofia'));
+    }
+
+    public function testATimeIsMovedToTheServersZone(): void
+    {
+        // 13:45 UTC is 22:45 in Tokyo (no DST there, so the test does not
+        // depend on today's date: a time alone is moved with today's offset).
+        $this->assertSame([1, 3], $this->searchIds('22:45:30', 'Asia/Tokyo'));
+    }
+
+    public function testADateThatDoesNotExistFindsNothing(): void
+    {
+        $this->assertSame([], $this->searchIds('31.02.2026', 'Europe/Sofia'));
+    }
+
+    public function testADateOnlyColumnIsNotMovedBetweenZones(): void
+    {
+        $table = (new DataTable(
+            DateFilterEvent::query(),
+            Request::create('/', 'GET', ['filter' => ['global' => '05.10.2026', 'timeZone' => 'Pacific/Kiritimati']]),
+        ))
+            ->setColumn('starts_at', 'Starts', searchable: true)
+            ->setDateColumn('starts_at', 'd.m.Y')
+            ->process();
+
+        $this->assertSame([1, 2], $table->getData()->pluck('id')->sort()->values()->all());
+    }
+
+    /** @return list<int> */
+    private function searchIds(string $term, ?string $zone = null): array
+    {
+        $filter = ['global' => $term] + ($zone === null ? [] : ['timeZone' => $zone]);
+
+        $table = (new DataTable(DateFilterEvent::query(), Request::create('/', 'GET', ['filter' => $filter])))
+            ->setColumn('starts_at', 'Starts', searchable: true)
+            ->setDateColumn('starts_at', 'd.m.Y H:i')
+            ->process();
+
+        return $table->getData()->pluck('id')->sort()->values()->all();
+    }
+
     // -- Compiled only, for the drivers without a server in the test run ------
 
     /** @return array<string, array{string, string, string}> */

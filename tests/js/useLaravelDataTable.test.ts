@@ -213,6 +213,28 @@ describe("useLaravelDataTable", () => {
         expect(lastQuery()).toMatchObject({ archived: "true" });
     });
 
+    it("sends the time zone under the key the server names", async () => {
+        const params = { per_page: "perPage", global_filter: "q", trashed: "archived", ordering: "sort", time_zone: "tz" };
+        const { table } = setup(payload({ params }), { searchDebounceMs: 300 });
+
+        table.onGlobalFilterChange("28.10.2026");
+        await nextTick();
+        vi.advanceTimersByTime(300);
+
+        expect(lastQuery()).toMatchObject({ q: "28.10.2026", tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    });
+
+    it("puts the time zone next to the search key when the server does not name it", async () => {
+        const params = { per_page: "perPage", global_filter: "search.term", trashed: "archived", ordering: "sort" };
+        const { table } = setup(payload({ params }), { searchDebounceMs: 300 });
+
+        table.onGlobalFilterChange("al");
+        await nextTick();
+        vi.advanceTimersByTime(300);
+
+        expect(Object.keys(lastQuery())).toEqual(expect.arrayContaining(["search[term]", "search[timeZone]"]));
+    });
+
     it("restores a row with a POST to restoreUrl", () => {
         page.url = "/posts?filter%5Btrashed%5D=true&page=2";
         const { table } = setup(payload(), { restoreUrl: "/posts/?id/restore" });

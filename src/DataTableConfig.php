@@ -37,6 +37,24 @@ class DataTableConfig
         return (string) Config::get('data-table.trashed', 'filter.trashed');
     }
 
+    /**
+     * The key of the browser's time zone, sent with the search. By default it
+     * sits next to the search key: `filter.global` → `filter.timeZone`, `q` →
+     * `timeZone`.
+     */
+    public static function getTimeZoneKey(): string
+    {
+        $configured = Config::get('data-table.time_zone');
+
+        if (is_string($configured) && $configured !== '') {
+            return $configured;
+        }
+
+        $parent = array_slice(explode('.', self::getGlobalFilterKey()), 0, -1);
+
+        return implode('.', [...$parent, 'timeZone']);
+    }
+
     public static function getOrderingKey(): string
     {
         return (string) Config::get('data-table.ordering', 'ordering');
@@ -46,7 +64,7 @@ class DataTableConfig
      * The request keys a frontend has to send (`toArray()`'s `params`), so a
      * changed key in config/data-table.php reaches the composable too.
      *
-     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string}
+     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string, time_zone: string}
      */
     public static function requestKeys(): array
     {
@@ -55,6 +73,7 @@ class DataTableConfig
             'global_filter' => self::getGlobalFilterKey(),
             'trashed' => self::getTrashedKey(),
             'ordering' => self::getOrderingKey(),
+            'time_zone' => self::getTimeZoneKey(),
         ];
     }
 

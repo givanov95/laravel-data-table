@@ -299,7 +299,12 @@ class QueryBuilderTable
      */
     private function tolerableFilters(): array
     {
-        $names = ['global', 'timeZone', $this->spatieFilterName(DataTableConfig::getGlobalFilterKey())];
+        $names = [
+            'global',
+            'timeZone',
+            $this->spatieFilterName(DataTableConfig::getGlobalFilterKey()),
+            $this->spatieFilterName(DataTableConfig::getTimeZoneKey()),
+        ];
 
         if ($this->allowTrashed) {
             $names[] = 'trashed';

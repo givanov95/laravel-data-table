@@ -32,11 +32,16 @@ return [
     | filter parameter (`filter.search`), that filter is accepted without being
     | applied by Spatie.
     |
+    | `time_zone` carries the browser's zone, sent with the search, so a date
+    | typed in the search box is read in the user's zone. Null puts it next to
+    | `global_filter` (`filter.timeZone`).
+    |
     */
     'global_filter' => 'filter.global',
     'per_page'      => 'perPage',
     'trashed'       => 'filter.trashed',
     'ordering'      => 'ordering',
+    'time_zone'     => null,
 
     /*
     |--------------------------------------------------------------------------

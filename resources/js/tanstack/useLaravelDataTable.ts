@@ -39,6 +39,8 @@ export interface LaravelDataTableParams {
     global_filter: string;
     trashed: string;
     ordering: string;
+    /** Sent by v4+; next to `global_filter` (`filter.timeZone`) otherwise. */
+    time_zone?: string;
 }
 
 export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
@@ -137,8 +139,8 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         return {
             perPage: queryKey(params.value.per_page),
             global,
-            // Sent next to the search term (date columns are matched in it).
-            timeZone: queryKey([...parent, "timeZone"].join(".")),
+            // Sent with the search term: dates typed in it are read in the user's zone.
+            timeZone: queryKey(params.value.time_zone ?? [...parent, "timeZone"].join(".")),
             trashed: queryKey(params.value.trashed),
             ordering: queryKey(params.value.ordering),
         };

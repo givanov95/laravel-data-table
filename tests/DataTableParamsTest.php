@@ -14,6 +14,21 @@ final class DataTableParamsTest extends TestCase
         $this->assertFalse(property_exists(DataTableParams::class, 'restoreId'));
     }
 
+    public function testTheTimeZoneIsOneKnownToPhpOrNothing(): void
+    {
+        $zone = fn (mixed $value) => DataTableParams::fromRequest(
+            Request::create('/', 'GET', ['filter' => ['timeZone' => $value]]),
+        )->timeZone;
+
+        $this->assertSame('Europe/Sofia', $zone('Europe/Sofia'));
+        $this->assertSame('Etc/UTC', $zone('Etc/UTC'));
+        $this->assertSame('+02:00', $zone('+02:00'));
+        $this->assertNull($zone('xx'));
+        $this->assertNull($zone(''));
+        $this->assertNull($zone(['Europe/Sofia']));
+        $this->assertNull(DataTableParams::fromRequest(Request::create('/'))->timeZone);
+    }
+
     public function testAnArrayAsTheSearchOrTheTrashedToggleIsTreatedAsMissing(): void
     {
         $request = Request::create('/', 'GET', ['filter' => ['global' => ['a'], 'trashed' => ['b']]]);

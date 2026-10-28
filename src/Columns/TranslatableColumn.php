@@ -12,8 +12,11 @@ final class TranslatableColumn extends Column
 
     public readonly string $translationKey;
 
+    /**
+     * @param string|int|\UnitEnum $locale an enum (`Locale::Bg`) is taken as its value
+     */
     public function __construct(
-        string|int $locale,
+        string|int|\UnitEnum $locale,
         string $translationKey,
         ?string $label = null,
         bool $searchable = false,
@@ -31,7 +34,7 @@ final class TranslatableColumn extends Column
         );
 
         $this->translationKey = $translationKey;
-        $this->locale = $locale;
+        $this->locale = $locale instanceof \UnitEnum ? \Illuminate\Support\enum_value($locale) : $locale;
     }
 
     public function getTranslationKey(): string

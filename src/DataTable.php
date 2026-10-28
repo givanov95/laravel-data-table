@@ -167,8 +167,11 @@ class DataTable
                 $locale = $translatableColumn->getLocale();
 
                 // The column's locale: with several loaded, the first one found was shown.
+                // On the stored values: the translation model may cast its locale or key
+                // (to an enum, a value object), which would never equal the column's text.
                 $translation = optional($item->{$relation})->first(
-                    fn ($translation) => $translation->{$keyColumn} == $key && $translation->{$localeColumn} == $locale,
+                    fn (Model $translation) => (string) ($translation->getAttributes()[$keyColumn] ?? '') === (string) $key
+                        && (string) ($translation->getAttributes()[$localeColumn] ?? '') === (string) $locale,
                 );
 
                 if ($translation) {

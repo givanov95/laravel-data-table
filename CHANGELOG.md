@@ -1,5 +1,17 @@
 # Changelog
 
+## v4.1.1
+
+### Fixed
+- A `TranslatableColumn` was empty when the translation model casts its locale (or key) to an
+  enum (`'locale' => Locale::class`): since 4.0.0 the translation is picked by its locale, and the
+  enum was compared with the column's string. The stored values are compared now, so any cast
+  works (#46). `new TranslatableColumn(Locale::Bg, …)` takes an enum as its value.
+- A text filter lost a trailing space when the server's (trimmed) answer came back while the user
+  was still typing, so `team ` + `news` became `teamnews`.
+- `ServerDataTable` (re-publish the stubs): a typed "from" later than "to" moves the other end
+  along instead of an empty table; a text filter takes the full width on a narrow screen.
+
 ## v4.1.0
 
 ### Added

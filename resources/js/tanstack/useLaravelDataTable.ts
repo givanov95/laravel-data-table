@@ -428,6 +428,22 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         return applied && !Array.isArray(applied) ? { ...applied } : {};
     };
 
+    /**
+     * The server's filters, keeping what is being typed where the server only
+     * trimmed it: `team ` must not turn into `team` before the next word.
+     */
+    const syncedFilters = (): Record<string, LaravelDataTableFilterValue> => {
+        const server = serverFilters();
+
+        for (const [key, local] of Object.entries(filters.value)) {
+            if (typeof local === "string" && server[key] === local.trim()) {
+                server[key] = local;
+            }
+        }
+
+        return server;
+    };
+
     // Typed into (a text filter waits like the search), so local: seeded from
     // the payload and re-synced from it while nothing is waiting or in flight,
     // so the answer to one change does not undo the next (two quick ticks).
@@ -440,7 +456,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         () => JSON.stringify(payload.value.state?.filters ?? {}),
         () => {
             if (filterTimer === undefined && !filtersInFlight) {
-                filters.value = serverFilters();
+                filters.value = syncedFilters();
             }
         },
     );
@@ -478,7 +494,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
                 // Only the latest visit, with nothing waiting, hands back to the server.
                 if (seq === filterSeq && filterTimer === undefined) {
                     filtersInFlight = false;
-                    filters.value = serverFilters();
+                    filters.value = syncedFilters();
                 }
             },
         });

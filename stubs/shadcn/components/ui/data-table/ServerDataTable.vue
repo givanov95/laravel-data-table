@@ -167,6 +167,11 @@ function range(key: string): { from?: string, to?: string } {
 function setRange(key: string, end: "from" | "to", day: string) {
   const next = { ...range(key), [end]: day || undefined }
 
+  // A typed "from" past "to" (min/max only limit the picker) moves the other end along.
+  if (next.from && next.to && next.from > next.to) {
+    next[end === "from" ? "to" : "from"] = day
+  }
+
   props.setColumnFilter?.(key, next.from || next.to ? next : undefined)
 }
 
@@ -283,7 +288,7 @@ const showTrailingJump = computed(() => currentPage.value + PAGE_RANGE < lastPag
 
           <Input
             v-else
-            class="h-9 w-[12rem]"
+            class="h-9 w-full sm:w-[12rem]"
             :placeholder="filterLabel(column)"
             :aria-label="filterLabel(column)"
             :model-value="text(column.key)"

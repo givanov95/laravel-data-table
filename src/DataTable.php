@@ -169,20 +169,50 @@ class DataTable
             $localeColumn,
             $textColumn,
         ) {
+            if ($this->translatableColumns->isEmpty()) {
+                return $item;
+            }
+
+            $translations = $item->{$relation};
+
+            if (! $translations instanceof Collection) {
+                $translations = new Collection($translations ? [$translations] : []);
+            }
+
+            // One pass over the row's translations: [key][locale] => the first one stored.
+            // On the stored values: the translation model may cast its locale or key
+            // (to an enum, a value object), which would never equal the column's text;
+            // a language the column does not list is skipped, whatever the cast makes of it.
+            $index = [];
+
+            foreach ($translations as $translation) {
+                $attributes = $translation->getAttributes();
+                $index[(string) ($attributes[$keyColumn] ?? '')][(string) ($attributes[$localeColumn] ?? '')] ??= $translation;
+            }
+
             foreach ($this->translatableColumns as $translatableColumn) {
                 $key = $translatableColumn->getTranslationKey();
-                $locale = $translatableColumn->getLocale();
+                $byLocale = $index[(string) $key] ?? [];
 
-                // The column's locale: with several loaded, the first one found was shown.
-                // On the stored values: the translation model may cast its locale or key
-                // (to an enum, a value object), which would never equal the column's text.
-                $translation = optional($item->{$relation})->first(
-                    fn (Model $translation) => (string) ($translation->getAttributes()[$keyColumn] ?? '') === (string) $key
-                        && (string) ($translation->getAttributes()[$localeColumn] ?? '') === (string) $locale,
-                );
+                // The first language with a text that is not empty; with none, the column's own
+                // translation as it is (an empty text stays empty).
+                $shown = null;
 
-                if ($translation) {
-                    $item->{$key} = $translation->{$textColumn};
+                foreach ($translatableColumn->getLocales() as $locale) {
+                    $translation = $byLocale[(string) $locale] ?? null;
+
+                    // Spaces only, as SQL's TRIM() in the ordering: both must agree on what is empty.
+                    if ($translation && trim((string) $translation->{$textColumn}, ' ') !== '') {
+                        $shown = $translation;
+
+                        break;
+                    }
+                }
+
+                $shown ??= $byLocale[(string) $translatableColumn->getLocale()] ?? null;
+
+                if ($shown) {
+                    $item->{$key} = $shown->{$textColumn};
                 }
             }
 
@@ -359,12 +389,17 @@ class DataTable
             return;
         }
 
-        $keys = $this->translatableColumns->map(fn (TranslatableColumn $c) => $c->getTranslationKey())->unique()->values()->all();
-        $locales = $this->translatableColumns->map(fn (TranslatableColumn $c) => $c->getLocale())->unique()->values()->all();
+        // Each column with its own languages: one column's fallbacks are not loaded for another key.
+        $columns = $this->translatableColumns->values();
 
-        $builder->with([$relation => function ($query) use ($keys, $locales) {
-            $query->whereIn(DataTableConfig::getTranslatableColumnName(), $keys)
-                ->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $locales);
+        $builder->with([$relation => function ($query) use ($columns) {
+            $query->where(function ($query) use ($columns) {
+                foreach ($columns as $column) {
+                    $query->orWhere(fn ($pair) => $pair
+                        ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey())
+                        ->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocales()));
+                }
+            });
         }]);
     }
 
@@ -644,8 +679,9 @@ class DataTable
                 }
 
                 if ($column instanceof TranslatableColumn) {
+                    // The text in any of the column's languages: the one a row shows may be a fallback.
                     $query->orWhereHas(DataTableConfig::getTranslatableRelation(), function ($q) use ($column, $searchText) {
-                        $q->where(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocale())
+                        $q->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocales())
                             ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey());
 
                         LikeExpression::apply($q, DataTableConfig::getTranslatableTextColumn(), $searchText);
@@ -828,7 +864,7 @@ class DataTable
     {
         if ($column instanceof TranslatableColumn) {
             $query->whereHas(DataTableConfig::getTranslatableRelation(), function (Builder $q) use ($column, $clause) {
-                $q->where(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocale())
+                $q->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocales())
                     ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey());
 
                 $clause($q, $q->getModel()->getTable().'.'.DataTableConfig::getTranslatableTextColumn());
@@ -1087,6 +1123,11 @@ class DataTable
         return "{$mainTable}.{$column}";
     }
 
+    /**
+     * By the text the row shows: the first language with a text that is not empty. Rows
+     * with none come last in both directions, the same on every database (NULL is first
+     * on MySQL and SQLite and last on PostgreSQL in an ascending sort).
+     */
     private function orderByTranslatable(
         Builder $builder,
         TranslatableColumn $column,
@@ -1096,25 +1137,44 @@ class DataTable
         // Keys, table and morph class from the relation itself: the model's
         // key need not be `id`, and under a morph map the type is the alias.
         $relation = $this->translationsRelation($builder->getModel());
-        $alias = 'dt_translations';
         $keyColumn = DataTableConfig::getTranslatableColumnName();
         $localeColumn = DataTableConfig::getTranslatableLocaleColumn();
+        $textColumn = DataTableConfig::getTranslatableTextColumn();
+        $grammar = $builder->getQuery()->getGrammar();
+        $texts = [];
 
-        $builder->leftJoin("{$relation->getRelated()->getTable()} as {$alias}", function ($join) use (
-            $relation,
-            $alias,
-            $mainTable,
-            $column,
-            $keyColumn,
-            $localeColumn,
-        ) {
-            $join->on("{$alias}.{$relation->getForeignKeyName()}", '=', "{$mainTable}.{$relation->getLocalKeyName()}")
-                ->where("{$alias}.{$relation->getMorphType()}", '=', $relation->getMorphClass())
-                ->where("{$alias}.{$localeColumn}", '=', $column->getLocale())
-                ->where("{$alias}.{$keyColumn}", '=', $column->getTranslationKey());
-        });
+        // One join per language; a translation is one row per record, key and language.
+        foreach ($column->getLocales() as $index => $locale) {
+            $alias = $index === 0 ? 'dt_translations' : "dt_translations_{$index}";
 
-        $builder->orderBy("{$alias}.".DataTableConfig::getTranslatableTextColumn(), $ordering->direction);
+            $builder->leftJoin("{$relation->getRelated()->getTable()} as {$alias}", function ($join) use (
+                $relation,
+                $alias,
+                $mainTable,
+                $column,
+                $locale,
+                $keyColumn,
+                $localeColumn,
+            ) {
+                $join->on("{$alias}.{$relation->getForeignKeyName()}", '=', "{$mainTable}.{$relation->getLocalKeyName()}")
+                    ->where("{$alias}.{$relation->getMorphType()}", '=', $relation->getMorphClass())
+                    ->where("{$alias}.{$localeColumn}", '=', $locale)
+                    ->where("{$alias}.{$keyColumn}", '=', $column->getTranslationKey());
+            });
+
+            $texts[] = "NULLIF(TRIM({$grammar->wrap("{$alias}.{$textColumn}")}), '')";
+        }
+
+        $shown = count($texts) === 1 ? $texts[0] : 'COALESCE('.implode(', ', $texts).')';
+        // As orderBy() does: the direction goes into raw SQL, so anything else is refused.
+        $direction = strtolower($ordering->direction);
+
+        if (! in_array($direction, ['asc', 'desc'], true)) {
+            throw new \InvalidArgumentException('Order direction must be "asc" or "desc".');
+        }
+
+        $builder->orderByRaw("CASE WHEN {$shown} IS NULL THEN 1 ELSE 0 END")
+            ->orderByRaw("{$shown} {$direction}");
     }
 
     private function translationsRelation(Model $model): MorphOneOrMany

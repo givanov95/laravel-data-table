@@ -8,13 +8,17 @@ return [
     | Translatable storage
     |--------------------------------------------------------------------------
     |
-    | Used by TranslatableColumn. `translatable_table` is the table that stores
-    | translations, `translatable_column` is the column inside that table that
-    | holds the translation key (e.g. "title", "name").
+    | Used by TranslatableColumn. `translatable_relation` is the model's
+    | morphMany relation to its translations (the table, keys and morph class
+    | come from it). In the translations table, `translatable_column` holds the
+    | translation key (e.g. "title", "name"), `translatable_locale_column` the
+    | locale and `translatable_text_column` the text.
     |
     */
-    'translatable_table'  => 'translations',
-    'translatable_column' => 'key',
+    'translatable_relation'      => 'translations',
+    'translatable_column'        => 'key',
+    'translatable_locale_column' => 'locale',
+    'translatable_text_column'   => 'text',
 
     /*
     |--------------------------------------------------------------------------

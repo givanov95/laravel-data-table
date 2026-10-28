@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Config;
  */
 class DataTableConfig
 {
+    /**
+     * @deprecated 4.0 Not read any more: the table comes from the translations relation.
+     */
     public static function getTranslatableTable(): string
     {
         return (string) Config::get('data-table.translatable_table', 'translations');
@@ -20,6 +23,22 @@ class DataTableConfig
     public static function getTranslatableColumnName(): string
     {
         return (string) Config::get('data-table.translatable_column', 'key');
+    }
+
+    /** The model's relation (morphMany) to its translations. */
+    public static function getTranslatableRelation(): string
+    {
+        return (string) Config::get('data-table.translatable_relation', 'translations');
+    }
+
+    public static function getTranslatableLocaleColumn(): string
+    {
+        return (string) Config::get('data-table.translatable_locale_column', 'locale');
+    }
+
+    public static function getTranslatableTextColumn(): string
+    {
+        return (string) Config::get('data-table.translatable_text_column', 'text');
     }
 
     public static function getGlobalFilterKey(): string

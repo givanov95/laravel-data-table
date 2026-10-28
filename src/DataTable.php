@@ -11,12 +11,19 @@ use Givanov95\DataTable\Columns\PriceColumn;
 use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Columns\TranslatableColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
+use Givanov95\DataTable\Exceptions\UnsupportedRelationException;
 use Givanov95\DataTable\Support\Archive;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\Relations\MorphOneOrMany;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -93,7 +100,8 @@ class DataTable
         $this->columnFilter = new ColumnFilter($this);
 
         $this->request = $request ?? App::make(Request::class);
-        $this->ordering = Ordering::fromRequest($this->request);
+        // The model's key, not `id`: a model keyed on `uid` has no `id` column.
+        $this->ordering = Ordering::fromRequest($this->request, $builder->getModel()->getKeyName());
 
         $this->setBuilder($builder);
     }
@@ -126,14 +134,28 @@ class DataTable
         $lengthAwarePaginator = $this->getBuilder()->paginate($params->perPage);
         $this->paginator = new Paginator($lengthAwarePaginator->withQueryString());
 
-        $this->data = (new Collection($this->paginator->items()))->map(function ($item) {
+        $relation = DataTableConfig::getTranslatableRelation();
+        $keyColumn = DataTableConfig::getTranslatableColumnName();
+        $localeColumn = DataTableConfig::getTranslatableLocaleColumn();
+        $textColumn = DataTableConfig::getTranslatableTextColumn();
+
+        $this->data = (new Collection($this->paginator->items()))->map(function ($item) use (
+            $relation,
+            $keyColumn,
+            $localeColumn,
+            $textColumn,
+        ) {
             foreach ($this->translatableColumns as $translatableColumn) {
                 $key = $translatableColumn->getTranslationKey();
-                $databaseColumnName = DataTableConfig::getTranslatableColumnName();
-                $translation = optional($item->translations)->firstWhere($databaseColumnName, $key);
+                $locale = $translatableColumn->getLocale();
+
+                // The column's locale: with several loaded, the first one found was shown.
+                $translation = optional($item->{$relation})->first(
+                    fn ($translation) => $translation->{$keyColumn} == $key && $translation->{$localeColumn} == $locale,
+                );
 
                 if ($translation) {
-                    $item->{$key} = $translation->text;
+                    $item->{$key} = $translation->{$textColumn};
                 }
             }
 
@@ -247,7 +269,32 @@ class DataTable
             ]);
         }
 
+        $this->eagerLoadTranslations($builder);
+
         $this->setBuilder($builder);
+    }
+
+    /**
+     * The translations the columns show, loaded with the page instead of one
+     * query per row (and no LazyLoadingViolationException under
+     * preventLazyLoading()). A load the app set up itself (`with()`,
+     * setRelation()) is left as it is.
+     */
+    private function eagerLoadTranslations(Builder $builder): void
+    {
+        $relation = DataTableConfig::getTranslatableRelation();
+
+        if ($this->translatableColumns->isEmpty() || array_key_exists($relation, $builder->getEagerLoads())) {
+            return;
+        }
+
+        $keys = $this->translatableColumns->map(fn (TranslatableColumn $c) => $c->getTranslationKey())->unique()->values()->all();
+        $locales = $this->translatableColumns->map(fn (TranslatableColumn $c) => $c->getLocale())->unique()->values()->all();
+
+        $builder->with([$relation => function ($query) use ($keys, $locales) {
+            $query->whereIn(DataTableConfig::getTranslatableColumnName(), $keys)
+                ->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $locales);
+        }]);
     }
 
     /*
@@ -284,11 +331,68 @@ class DataTable
         return $this;
     }
 
+    /**
+     * @throws UnsupportedRelationException when the column is orderable and a
+     *     relation on its path cannot be ordered by with a join (see
+     *     applyRelationOrdering()); a searchable-only column takes any relation.
+     */
     public function setRelationColumn(RelationColumn $relationColumn): self
     {
+        if ($relationColumn->isOrderable()) {
+            $this->assertOrderableRelationPath($relationColumn);
+        }
+
         $this->columns->put($relationColumn->getDatabaseColumnName(), $relationColumn);
 
         return $this;
+    }
+
+    /**
+     * Checked when the column is declared, so a table that could not be sorted
+     * by it fails on every load, in development, not with a 500 on the first
+     * click on its header.
+     */
+    private function assertOrderableRelationPath(RelationColumn $column): void
+    {
+        $model = $this->getBuilder()->getModel();
+
+        foreach (explode('.', $column->relationString) as $name) {
+            if (! $model->isRelation($name)) {
+                throw new UnsupportedRelationException(
+                    sprintf('%s::%s() is not a relation, so the column "%s" cannot be ordered by.', $model::class, $name, $column->relationPath),
+                    ['column' => $column->relationPath, 'relation' => $name],
+                );
+            }
+
+            $relation = $model->{$name}();
+            self::assertJoinableRelation($relation, $model, $name);
+            $model = $relation->getRelated();
+        }
+    }
+
+    /**
+     * Ordering joins each relation of the path, so only relations with at most
+     * one related row per row can take part: BelongsTo, HasOne and MorphOne.
+     * A to-many relation (or a `…OfMany`) would repeat rows and break the pages.
+     */
+    private static function assertJoinableRelation(mixed $relation, Model $model, string $name): void
+    {
+        $joinable = $relation instanceof Relation
+            && ! $relation instanceof MorphTo
+            && ($relation instanceof BelongsTo
+                || (($relation instanceof HasOne || $relation instanceof MorphOne) && ! $relation->isOneOfMany()));
+
+        if (! $joinable) {
+            throw new UnsupportedRelationException(
+                sprintf(
+                    'Cannot order by %s::%s() (%s): only BelongsTo, HasOne and MorphOne relations can be ordered by.',
+                    $model::class,
+                    $name,
+                    is_object($relation) ? $relation::class : get_debug_type($relation),
+                ),
+                ['relation' => $name],
+            );
+        }
     }
 
     public function setTranslatableColumn(TranslatableColumn $translatableColumn): self
@@ -425,11 +529,11 @@ class DataTable
                 }
 
                 if ($column instanceof TranslatableColumn) {
-                    $query->orWhereHas('translations', function ($q) use ($column, $searchText) {
-                        $q->where('locale', $column->getLocale())
+                    $query->orWhereHas(DataTableConfig::getTranslatableRelation(), function ($q) use ($column, $searchText) {
+                        $q->where(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocale())
                             ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey());
 
-                        LikeExpression::apply($q, 'text', $searchText);
+                        LikeExpression::apply($q, DataTableConfig::getTranslatableTextColumn(), $searchText);
                     });
 
                     continue;
@@ -719,23 +823,43 @@ class DataTable
         string $mainTable,
         Ordering $ordering,
     ): void {
-        $modelClass = $builder->getModel()::class;
-        $translationTable = DataTableConfig::getTranslatableTable();
-        $translatableKeyColumn = DataTableConfig::getTranslatableColumnName();
+        // Keys, table and morph class from the relation itself: the model's
+        // key need not be `id`, and under a morph map the type is the alias.
+        $relation = $this->translationsRelation($builder->getModel());
+        $alias = 'dt_translations';
+        $keyColumn = DataTableConfig::getTranslatableColumnName();
+        $localeColumn = DataTableConfig::getTranslatableLocaleColumn();
 
-        $builder->leftJoin("{$translationTable} as t", function ($join) use (
+        $builder->leftJoin("{$relation->getRelated()->getTable()} as {$alias}", function ($join) use (
+            $relation,
+            $alias,
             $mainTable,
-            $modelClass,
             $column,
-            $translatableKeyColumn,
+            $keyColumn,
+            $localeColumn,
         ) {
-            $join->on('t.translatable_id', '=', "{$mainTable}.id")
-                ->where('t.translatable_type', '=', $modelClass)
-                ->where('t.locale', '=', $column->getLocale())
-                ->where("t.{$translatableKeyColumn}", '=', $column->getTranslationKey());
+            $join->on("{$alias}.{$relation->getForeignKeyName()}", '=', "{$mainTable}.{$relation->getLocalKeyName()}")
+                ->where("{$alias}.{$relation->getMorphType()}", '=', $relation->getMorphClass())
+                ->where("{$alias}.{$localeColumn}", '=', $column->getLocale())
+                ->where("{$alias}.{$keyColumn}", '=', $column->getTranslationKey());
         });
 
-        $builder->orderBy('t.text', $ordering->direction);
+        $builder->orderBy("{$alias}.".DataTableConfig::getTranslatableTextColumn(), $ordering->direction);
+    }
+
+    private function translationsRelation(Model $model): MorphOneOrMany
+    {
+        $name = DataTableConfig::getTranslatableRelation();
+        $relation = $model->isRelation($name) ? $model->{$name}() : null;
+
+        if (! $relation instanceof MorphOneOrMany) {
+            throw new UnsupportedRelationException(
+                sprintf('%s::%s() must be a morphMany (or morphOne) relation to order by a TranslatableColumn.', $model::class, $name),
+                ['relation' => $name],
+            );
+        }
+
+        return $relation;
     }
 
     /**
@@ -747,22 +871,34 @@ class DataTable
 
         foreach ($relations as $relation) {
             $relationInstance = $parentModel->{$relation}();
+            self::assertJoinableRelation($relationInstance, $parentModel, $relation);
+
             $relatedModel = $relationInstance->getRelated();
             $relatedTable = $relatedModel->getTable();
 
             if ($relationInstance instanceof MorphOne) {
                 $morphType = $relationInstance->getMorphType();
                 $morphId = $relationInstance->getForeignKeyName();
+                $localKey = $relationInstance->getLocalKeyName();
+                $morphClass = $relationInstance->getMorphClass();
                 $builder->leftJoin("{$relatedTable} AS {$relation}", function ($join) use (
                     $prevTable,
                     $relation,
                     $morphType,
                     $morphId,
-                    $parentModel,
+                    $localKey,
+                    $morphClass,
                 ) {
-                    $join->on("{$relation}.{$morphId}", '=', "{$prevTable}.id")
-                        ->where("{$relation}.{$morphType}", '=', $parentModel->getMorphClass());
+                    $join->on("{$relation}.{$morphId}", '=', "{$prevTable}.{$localKey}")
+                        ->where("{$relation}.{$morphType}", '=', $morphClass);
                 });
+            } elseif ($relationInstance instanceof HasOne) {
+                $builder->leftJoin(
+                    "{$relatedTable} AS {$relation}",
+                    "{$relation}.{$relationInstance->getForeignKeyName()}",
+                    '=',
+                    "{$prevTable}.{$relationInstance->getLocalKeyName()}",
+                );
             } else {
                 $foreignKey = $relationInstance->getForeignKeyName();
                 $ownerKeyName = $relationInstance->getOwnerKeyName();

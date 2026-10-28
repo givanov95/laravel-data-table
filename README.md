@@ -65,8 +65,10 @@ createApp(App)
 
 ```php
 return [
-    'translatable_table'  => 'translations',
-    'translatable_column' => 'key',
+    'translatable_relation'      => 'translations',
+    'translatable_column'        => 'key',
+    'translatable_locale_column' => 'locale',
+    'translatable_text_column'   => 'text',
 
     'global_filter' => 'filter.global',
     'per_page'      => 'perPage',
@@ -207,10 +209,22 @@ $table->setRelationColumn(
 );
 ```
 
+Ordering joins each relation of the path, so an orderable relation column takes
+`BelongsTo`, `HasOne` and `MorphOne` relations (keys and morph class from the
+relation). Any other relation (`HasMany`, `BelongsToMany`, `MorphTo`, a
+`…OfMany()`) would repeat rows, so `setRelationColumn()` throws
+`UnsupportedRelationException` for an orderable column on it. A searchable-only
+column takes any relation (it is a `whereHas`).
+
 ### Translatable columns
 
 Designed to plug into the common `translations` morphMany pattern
-(`translatable_id`, `translatable_type`, `locale`, `key`, `text`):
+(`translatable_id`, `translatable_type`, `locale`, `key`, `text`). The relation
+and the `key` / `locale` / `text` columns are configurable (`translatable_*`); the
+table, the model's key and the morph class (a morph map alias, too) come from
+the relation. The translations the columns show are loaded with the page (only
+their keys and locales), unless the query already loads the relation
+(`with('translations')`, `setRelation('translations')`):
 
 ```php
 use Givanov95\DataTable\Columns\TranslatableColumn;

@@ -18,6 +18,13 @@
 - Removed: the `restore_id` config key, `DataTableConfig::getRestoreIdKey()`,
   `DataTableParams::$restoreId`, and `restore_id` from `toArray()['params']`.
 - `toArray()['state']['trashed']` is the archive as applied, not as requested.
+- An orderable `RelationColumn` whose path has a relation that cannot be joined without repeating
+  rows (`HasMany`, `BelongsToMany`, `MorphTo`, `…OfMany()`, or a method that is not a relation)
+  throws `UnsupportedRelationException` from `setRelationColumn()`. It used to fail (or repeat
+  rows) only when someone sorted by it. A searchable-only column takes any relation.
+- With `TranslatableColumn`s, each row carries only the translations the columns show (their keys
+  and locales), unless the query loads the relation itself; the per-row lazy load put every
+  translation of the row into the payload.
 - `QueryBuilderTable` takes its default page size from `data-table.default_per_page`, like
   `DataTable`, instead of a hard-coded 15. `->defaultPerPage(n)` still overrides it per table.
 - Frontend: `useLaravelDataTable` takes `restoreUrl` (`'/posts/?id/restore'` or a function of the
@@ -26,6 +33,10 @@
   `LaravelDataTableParams`.
 
 ### Added
+- Config keys `translatable_relation` (`translations`), `translatable_locale_column` (`locale`) and
+  `translatable_text_column` (`text`), for the names that were hard-coded. `translatable_table` is
+  no longer read: the table comes from the relation (`DataTableConfig::getTranslatableTable()` is
+  deprecated).
 - **The search reads dates in the user's time zone.** The composable sent the browser's zone with
   every search (`filter[timeZone]`), but the server never read it. It is now a request key
   (`time_zone`, by default next to `global_filter`, also in `toArray()['params']`) and
@@ -47,6 +58,18 @@
   past the 64-bit range): PostgreSQL rejected `id = 'abc'` (22P02) with a 500. Filtered on alone
   (`ColumnFilter`), such a value matches nothing.
 
+- Ordering by a `TranslatableColumn` joined on `{table}.id` and the model's class name: a model
+  keyed on another column failed, and under a morph map the order was silently lost. The key,
+  table and morph class now come from the translations relation.
+- Ordering by a `RelationColumn` on a `HasOne` called `getOwnerKeyName()`, which only `BelongsTo`
+  has: a 500. `HasOne` is supported now, and `MorphOne` joins on the relation's local key.
+- The default ordering is by the model's key (`getKeyName()`), not `id`.
+- A `TranslatableColumn` shows the text of its own locale; with several locales loaded it showed
+  the first one found.
+- The translations of the `TranslatableColumn`s are loaded with the page (only their keys and
+  locales) instead of one query per row, which also failed under `Model::preventLazyLoading()`.
+  A load the query already has (`with('translations')`, `setRelation()`) is left as it is.
+
 ### Migration from 3.x
 1. Call `->allowTrashed()` (optionally with an ability) on every table that has an archive toggle.
 2. Add a POST route for restoring that returns `$table->restore($id, $scope)` — build the table
@@ -56,7 +79,9 @@
 4. Drop any code that reads `restore_id` (e.g. a controller that restored on `?restore_id=`) and
    the workarounds that built `DataTableParams` by hand to keep `filter[trashed]` / `restore_id`
    out.
-5. A `QueryBuilderTable` without `->defaultPerPage()` now lists `default_per_page` rows (15 if the
+5. An orderable `RelationColumn` over a to-many relation now throws when declared: make it
+   searchable-only, or order by something else.
+6. A `QueryBuilderTable` without `->defaultPerPage()` now lists `default_per_page` rows (15 if the
    app has no config of its own).
 
 ## v3.5.1

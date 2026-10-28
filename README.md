@@ -75,6 +75,7 @@ return [
     'trashed'       => 'filter.trashed',
     'ordering'      => 'ordering',
     'time_zone'     => null,   // null: next to global_filter (filter.timeZone)
+    'column_filters' => 'filter', // filter[status]=paid
 
     'default_per_page' => 15,
     'max_per_page'     => 100,
@@ -185,6 +186,19 @@ parameter (`'global_filter' => 'filter.search'` accepts `filter[search]`), and
 keeps tolerating `filter[global]`, `filter[timeZone]` and (with `allowTrashed()`)
 `filter[trashed]`. A search key outside that parameter (`'global_filter' => 'q'`)
 works too.
+
+Filters by column take `'filter'` in `columns()`: `'text'` (contains), `'exact'`
+(one or several values, never one the column cannot hold), `'select'` (with
+`'options'`, as for `setFilterOptions()`) or `'date'` (a range of calendar days, in
+the server's zone). They are applied by the table, not by Spatie, so
+`filter[title]=Smith, John` stays one value.
+
+```php
+->columns([
+    ['key' => 'status', 'label' => __('Status'), 'filter' => 'select', 'options' => ['active' => __('Active'), 'blocked' => __('Blocked')]],
+    ['key' => 'created_at', 'label' => __('Created'), 'filter' => 'date'],
+])
+```
 
 `allowTrashed(ability: 'viewArchive')` shows the soft-deleted rows only to users
 `Gate::allows('viewArchive', User::class)`; for the rest, and for a model without
@@ -313,6 +327,38 @@ $table->process(null, function ($query) {
 // Or for free-form mutations:
 $table->advancedSearch(fn ($q) => $q->whereJsonContains('tags', 'featured'));
 ```
+
+### Filters by column
+
+A column declared `filterable` takes its own filter from the request, next to
+the search: `filter[<key>]` (the parameter is `column_filters`). The filters AND
+with each other and with the search. The kind of filter follows the column:
+
+```php
+$table
+    // A select of the enum's cases: by value, labelled by the case's label() when it has one.
+    ->setColumn('status', __('Status'), filterable: true)
+    ->setEnumColumn('status', BookingStatus::class)
+
+    // A select of the app's options: a list of ['value' => …, 'label' => …], a
+    // value => label map, or a closure returning either (run once).
+    ->setColumn('staff_id', __('Staff'), filterable: true)
+    ->setFilterOptions('staff_id', fn () => $business->staff()->pluck('name', 'id')->all())
+
+    // A range of days: filter[starts_at][from]=2026-10-01&filter[starts_at][to]=2026-10-31.
+    ->setColumn('starts_at', __('Starts'), orderable: true, filterable: true)
+    ->setDateColumn('starts_at', 'd.m.Y H:i')
+
+    // Anything else is a text: contains, or equals with exactMatch.
+    ->setRelationColumn(new RelationColumn('customer.name', __('Customer'), filterable: true));
+```
+
+- **Select:** one value (`filter[status]=paid`) or several (`filter[status][]=paid&filter[status][]=open`). Only offered values are compared; none offered matches nothing.
+- **Date range:** ISO days, as a date input sends them. Either end may be left out, and `to` takes the whole day. For a column whose format has a time (`H`), the days are the user's, in the time zone the composable sends with the search. A date that does not exist is ignored.
+- **Text:** the same comparison as the search, for the column's type (price, `exactMatch`, relation, translation).
+- A key that is not a filterable column is ignored. A filterable column cannot be named like another key under the same parameter (`global`, `trashed` or `timeZone` with the defaults), and `setColumn()` throws if it is.
+
+`toArray()` describes each column's filter (`columns[].filterable`, `columns[].filter`: `{type: 'select', options: [{value, label}]}`, `{type: 'date'}` or `{type: 'text'}`) and gives the applied ones in `state.filters`.
 
 ### Archive and restore
 
@@ -471,6 +517,10 @@ in. The keys, for the app's `lang/*.json`:
 | `Next page` | Следваща страница | Volgende pagina |
 | `Last page` | Последна страница | Laatste pagina |
 | `Columns` | Колони | Kolommen |
+| `Clear filters` | Изчисти филтрите | Filters wissen |
+| `No options` | Няма опции | Geen opties |
+| `:label from` | :label от | :label vanaf |
+| `:label to` | :label до | :label tot |
 
 The translator receives `:from`, `:to` and `:total` as replacements; it must
 replace the longest names first (Laravel does), or `:to` eats the start of
@@ -523,9 +573,24 @@ A `RawOrdering` hides the sort from `state.sort` (the rows are not in the order
 of a column then); pass what it amounts to when there is one:
 `new RawOrdering('created_at DESC, id DESC', new Ordering('created_at', 'DESC'))`.
 
+The filters by column come with the composable: `filterColumns` (the columns the
+server filters by, with their kind and options), `filters` (the values, as the
+server applied them), `setColumnFilter(key, value)` (a select or a date range is
+sent at once, a text waits like the search box; an empty value removes the
+filter), `clearColumnFilters()` and `hasColumnFilters`. Each change goes back to
+page 1. For TanStack, the same filters are `state.columnFilters` and
+`onColumnFiltersChange`.
+
+`ServerDataTable` draws them in the toolbar, after the search box: a select is a
+button with the column's label that opens a list of checkboxes (and shows how many
+are ticked), a date range is two date fields with the column's label, and a text
+is a field. "Clear filters" shows while any filter is on. On a narrow screen the
+toolbar wraps and the date range takes its own line. `:show-filters="false"`
+leaves them out, to draw the page's own in `#toolbar`.
+
 `ServerDataTable` props beyond the composable's: `showTrashed`,
-`searchPlaceholder`, `emptyText`, `trashedLabel` and `cellClass` (classes on
-every body cell, e.g. `align-top` for tall rows).
+`searchPlaceholder`, `emptyText`, `trashedLabel`, `cellClass` (classes on
+every body cell, e.g. `align-top` for tall rows) and `showFilters` (true).
 
 `DataTable` is the client-side counterpart for rows already in the page (no
 server round trip): search, sorting, column toggle and the same footer as
@@ -542,7 +607,8 @@ anything that can grow: `DataTable` loads every row.
 ### `DataTable`
 
 - `__construct(Builder $builder, ?Request $request = null)`
-- `setColumn(string|Column $keyOrColumn, ?string $label = null, bool $searchable = false, bool $orderable = false, bool $exactMatch = false): self`
+- `setColumn(string|Column $keyOrColumn, ?string $label = null, bool $searchable = false, bool $orderable = false, bool $exactMatch = false, bool $filterable = false): self`
+- `setFilterOptions(string $columnKey, array|Closure $options): self`
 - `setRelationColumn(RelationColumn $column): self`
 - `setTranslatableColumn(TranslatableColumn $column): self`
 - `setEnumColumn(string $key, class-string<\BackedEnum> $enumClass): self`

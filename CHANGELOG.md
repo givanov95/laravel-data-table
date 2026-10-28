@@ -1,5 +1,39 @@
 # Changelog
 
+## v4.1.0
+
+### Added
+- **Filters by column** (#38). A column declared `filterable` (`setColumn(..., filterable: true)`,
+  and on `RelationColumn` / `TranslatableColumn`) takes its own filter from the request,
+  `filter[<key>]` (new config key `column_filters`). The filters AND with each other and with the
+  search. Three kinds, by column:
+  - **select:** an enum column offers its cases (by value, labelled by the case's `label()` when
+    it has one, else by its name); any column can offer the app's options with
+    `setFilterOptions($key, $options)` (a list, a `value => label` map or a closure). One value or
+    several; only offered values are compared.
+  - **date range:** `filter[key][from]` / `[to]`, ISO days, either end optional. For a column with
+    a time, the days are the user's (the time zone the search sends).
+  - **text:** the search's comparison for the column's type (price, `exactMatch`, relation,
+    translation).
+
+  Any other key is ignored. A filterable column cannot be named like another key under the same
+  parameter (`global`, `trashed`, `timeZone`): `setColumn()` throws.
+- `toArray()`: `columns[].filterable` and `columns[].filter` (kind and options), and
+  `state.filters`, the applied filters. `params.column_filters` names the parameter.
+- `QueryBuilderTable`: `'filter' => 'text' | 'exact' | 'select' | 'date'` (and `'options'`) in
+  `columns()`. The filters are applied by the table, not by Spatie, so a comma stays in the value.
+- Composable: `filterColumns`, `filters`, `setColumnFilter()`, `clearColumnFilters()`,
+  `hasColumnFilters`, plus `state.columnFilters` / `onColumnFiltersChange` for TanStack. A select
+  or a date range is sent at once, a text waits like the search; each change goes to page 1; a
+  quick second change is not undone by the answer to the first.
+- `ServerDataTable` (re-publish with `--tag=data-table-shadcn --force`): a control per filterable
+  column in the toolbar (a checkbox list, two date fields, a text field) and "Clear filters";
+  `showFilters` turns them off. New texts: `Clear filters`, `No options`, `:label from`,
+  `:label to`. No new shadcn components (it uses `dropdown-menu`, already required).
+
+### Fixed
+- `QueryBuilderTable` sorts by the model's key, not `id`, when `defaultSort()` is not called (#44).
+
 ## v4.0.1
 
 ### Fixed

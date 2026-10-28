@@ -12,6 +12,7 @@ class Column
         public bool $searchable = false,
         public bool $orderable = false,
         public bool $exactMatch = false,
+        public bool $filterable = false,
     ) {
     }
 
@@ -38,5 +39,11 @@ class Column
     public function isExactMatch(): bool
     {
         return $this->exactMatch;
+    }
+
+    /** Whether the request can filter by this column on its own (`filter[key]=…`). */
+    public function isFilterable(): bool
+    {
+        return $this->filterable;
     }
 }

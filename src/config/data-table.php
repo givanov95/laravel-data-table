@@ -40,12 +40,17 @@ return [
     | typed in the search box is read in the user's zone. Null puts it next to
     | `global_filter` (`filter.timeZone`).
     |
+    | `column_filters` is the parameter of the filters by column
+    | (`filter[status]=paid`). A filterable column cannot be named like another
+    | key under it (`global`, `trashed`, `timeZone` with the defaults).
+    |
     */
     'global_filter' => 'filter.global',
     'per_page'      => 'perPage',
     'trashed'       => 'filter.trashed',
     'ordering'      => 'ordering',
     'time_zone'     => null,
+    'column_filters' => 'filter',
 
     /*
     |--------------------------------------------------------------------------

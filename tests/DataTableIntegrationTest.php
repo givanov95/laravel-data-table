@@ -108,14 +108,15 @@ final class DataTableIntegrationTest extends TestCase
 
         // columns is an ordered array with clean keys.
         $this->assertSame([
-            ['key' => 'id', 'label' => '#', 'sortable' => true, 'searchable' => true],
-            ['key' => 'title', 'label' => 'Title', 'sortable' => true, 'searchable' => true],
+            ['key' => 'id', 'label' => '#', 'sortable' => true, 'searchable' => true, 'filterable' => false, 'filter' => null],
+            ['key' => 'title', 'label' => 'Title', 'sortable' => true, 'searchable' => true, 'filterable' => false, 'filter' => null],
         ], $result['columns']);
 
         // state echoes the applied request.
         $this->assertSame('red', $result['state']['search']);
         $this->assertSame(['column' => 'title', 'direction' => 'asc'], $result['state']['sort']);
         $this->assertFalse($result['state']['trashed']);
+        $this->assertSame([], $result['state']['filters']);
 
         $this->assertCount(2, $result['data']);
     }

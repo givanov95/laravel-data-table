@@ -235,6 +235,133 @@ describe("useLaravelDataTable", () => {
         expect(Object.keys(lastQuery())).toEqual(expect.arrayContaining(["search[term]", "search[timeZone]"]));
     });
 
+    describe("column filters", () => {
+        const filtered = (state: Record<string, unknown> = {}) =>
+            payload({
+                columns: [
+                    { key: "status", label: "Status", sortable: false, searchable: false, filterable: true, filter: { type: "select", options: [{ value: "paid", label: "Paid" }, { value: "open", label: "Open" }] } },
+                    { key: "created_at", label: "Created", sortable: true, searchable: false, filterable: true, filter: { type: "date" } },
+                    { key: "author.name", label: "Author", sortable: false, searchable: true, filterable: true, filter: { type: "text" } },
+                    { key: "id", label: "#", sortable: false, searchable: false },
+                ],
+                state: { search: "", sort: null, trashed: false, filters: [], ...state },
+            });
+
+        it("lists the filterable columns", () => {
+            const { table } = setup(filtered());
+
+            expect(table.filterColumns.map((c) => c.key)).toEqual(["status", "created_at", "author.name"]);
+        });
+
+        it("sends a select at once and a date range a moment later, on page 1, next to the search", () => {
+            const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            page.url = "/posts?page=3&filter%5Bglobal%5D=al&filter%5BtimeZone%5D=UTC";
+            const { table } = setup(filtered({ search: "al" }));
+
+            table.setColumnFilter("status", ["paid", "open"]);
+            expect(lastQuery()).toEqual({
+                page: "1",
+                "filter[global]": "al",
+                "filter[timeZone]": zone,
+                "filter[status][0]": "paid",
+                "filter[status][1]": "open",
+            });
+
+            // Typing a year passes through 0002, 0020…: only the last is sent.
+            page.url = "/posts?filter%5Bstatus%5D%5B0%5D=paid&filter%5Bstatus%5D%5B1%5D=open";
+            get.mockReset();
+            table.setColumnFilter("created_at", { from: "0002-10-01" });
+            table.setColumnFilter("created_at", { from: "2026-10-01", to: "2026-10-31" });
+            expect(get).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(500);
+            expect(get).toHaveBeenCalledOnce();
+            expect(lastQuery()).toEqual({
+                page: "1",
+                "filter[status][0]": "paid",
+                "filter[status][1]": "open",
+                "filter[created_at][from]": "2026-10-01",
+                "filter[created_at][to]": "2026-10-31",
+                // The server reads the days in the user's zone, with or without a search.
+                "filter[timeZone]": zone,
+            });
+        });
+
+        it("waits like the search for a text, and keeps a dotted key whole", () => {
+            const { table } = setup(filtered(), { searchDebounceMs: 300 });
+
+            table.setColumnFilter("author.name", "bo");
+            expect(get).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(300);
+            expect(lastQuery()).toEqual({ page: "1", "filter[author.name]": "bo" });
+        });
+
+        it("removes a filter that is emptied, and clears them all", () => {
+            page.url = "/posts?filter%5Bstatus%5D%5B0%5D=paid&filter%5Bcreated_at%5D%5Bfrom%5D=2026-10-01&filter%5Bglobal%5D=al";
+            const { table } = setup(filtered({ filters: { status: ["paid"], created_at: { from: "2026-10-01" } } }));
+
+            expect(table.hasColumnFilters).toBe(true);
+
+            const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+            table.setColumnFilter("status", []);
+            expect(lastQuery()).toEqual({ page: "1", "filter[created_at][from]": "2026-10-01", "filter[global]": "al", "filter[timeZone]": zone });
+
+            // No date filter and no search: no zone either.
+            table.clearColumnFilters();
+            expect(lastQuery()).toEqual({ page: "1", "filter[global]": "al" });
+            expect(table.hasColumnFilters).toBe(false);
+        });
+
+        it("follows the filters the server applied", async () => {
+            const { table, data } = setup(filtered());
+
+            data.value = filtered({ filters: { status: ["open"] } });
+            await nextTick();
+
+            expect(table.filters).toEqual({ status: ["open"] });
+            expect(table.state.columnFilters).toEqual([{ id: "status", value: ["open"] }]);
+        });
+
+        it("keeps a second quick change while the first is in flight", async () => {
+            const { table, data } = setup(filtered());
+
+            table.setColumnFilter("status", ["paid"]);
+            const first = lastOptions();
+            table.setColumnFilter("status", ["paid", "open"]);
+            const second = lastOptions();
+
+            // The answer to the first comes back while the second is on its way.
+            data.value = filtered({ filters: { status: ["paid"] } });
+            await nextTick();
+            first.onFinish();
+            expect(table.filters).toEqual({ status: ["paid", "open"] });
+
+            data.value = filtered({ filters: { status: ["paid", "open"] } });
+            await nextTick();
+            second.onFinish();
+            expect(table.filters).toEqual({ status: ["paid", "open"] });
+        });
+
+        it("takes TanStack's column filters, by column id", () => {
+            const { table } = setup(filtered());
+
+            table.onColumnFiltersChange([{ id: "author_name", value: "bo" }, { id: "nope", value: "x" }]);
+
+            expect(lastQuery()).toEqual({ page: "1", "filter[author.name]": "bo" });
+        });
+
+        it("uses the parameter the server names", () => {
+            const params = { per_page: "perPage", global_filter: "q", trashed: "archived", ordering: "sort", column_filters: "where" };
+            const { table } = setup({ ...filtered(), params });
+
+            table.setColumnFilter("status", ["paid"]);
+
+            expect(lastQuery()).toEqual({ page: "1", "where[status][0]": "paid" });
+        });
+    });
+
     it("restores a row with a POST to restoreUrl", () => {
         page.url = "/posts?filter%5Btrashed%5D=true&page=2";
         const { table } = setup(payload(), { restoreUrl: "/posts/?id/restore" });

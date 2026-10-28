@@ -26,6 +26,7 @@ final class RelationColumn extends Column
         bool $searchable = false,
         bool $orderable = false,
         bool $exactMatch = false,
+        bool $filterable = false,
     ) {
         $parts = explode('.', $relationString);
 
@@ -49,6 +50,7 @@ final class RelationColumn extends Column
             searchable: $searchable,
             orderable: $orderable,
             exactMatch: $exactMatch,
+            filterable: $filterable,
         );
     }
 }

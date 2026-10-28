@@ -4,17 +4,29 @@
 -->
 <script setup lang="ts" generic="TData extends RowData">
 import type {
+  ColumnFiltersState,
   PaginationState,
   RowData,
   SortingState,
   Updater,
 } from "@tanstack/vue-table"
 import { FlexRender, useTable } from "@tanstack/vue-table"
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "@lucide/vue"
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ListFilter, X } from "@lucide/vue"
 import { computed, useId } from "vue"
-import type { LaravelDataTableMeta } from "@givanov95/vue-data-table/tanstack"
+import type {
+  LaravelDataTableColumn,
+  LaravelDataTableColumnFilter,
+  LaravelDataTableFilterValue,
+  LaravelDataTableMeta,
+} from "@givanov95/vue-data-table/tanstack"
 import { t } from "@givanov95/vue-data-table/tanstack"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import type { DataTableColumnDef } from "./features"
 import { dataTableFeatures } from "./features"
 import { Input } from "@/components/ui/input"
@@ -51,6 +63,7 @@ const props = withDefaults(defineProps<{
     pagination: PaginationState
     sorting: SortingState
     globalFilter: string
+    columnFilters?: ColumnFiltersState
   }
   onPaginationChange: (updater: Updater<PaginationState>) => void
   onSortingChange: (updater: Updater<SortingState>) => void
@@ -71,8 +84,18 @@ const props = withDefaults(defineProps<{
   trashedLabel?: string
   /** Extra classes on every body cell, e.g. `align-top` for tall rows. */
   cellClass?: string
+  /** From the composable (v4.1+): the columns the server filters by, and their values. */
+  filterColumns?: (LaravelDataTableColumn & { filter: LaravelDataTableColumnFilter })[]
+  filters?: Record<string, LaravelDataTableFilterValue>
+  setColumnFilter?: (key: string, value: LaravelDataTableFilterValue | undefined) => void
+  clearColumnFilters?: () => void
+  hasColumnFilters?: boolean
+  onColumnFiltersChange?: (updater: Updater<ColumnFiltersState>) => void
+  /** Draw a control for each filterable column in the toolbar (default true). */
+  showFilters?: boolean
 }>(), {
   showTrashed: false,
+  showFilters: true,
 })
 
 // One id per table: two archivable lists on a page must not share it.
@@ -105,13 +128,53 @@ const table = useTable({
     get globalFilter() {
       return props.state.globalFilter
     },
+    get columnFilters() {
+      return props.state.columnFilters ?? []
+    },
   },
+  onColumnFiltersChange: (updater) => props.onColumnFiltersChange?.(updater),
   onPaginationChange: (updater) => props.onPaginationChange(updater),
   onSortingChange: (updater) => props.onSortingChange(updater),
   onGlobalFilterChange: (updater) => props.onGlobalFilterChange(
     typeof updater === "function" ? updater(props.state.globalFilter) : updater,
   ),
 })
+
+// ----- Filters by column ----------------------------------------------------
+
+const filterLabel = (column: LaravelDataTableColumn) => column.label ?? column.key
+
+/** The values of a select filter, as text. */
+function selected(key: string): string[] {
+  const value = props.filters?.[key]
+
+  return Array.isArray(value) ? value.map(String) : typeof value === "string" && value !== "" ? [value] : []
+}
+
+function toggleOption(key: string, option: string, checked: boolean) {
+  const values = selected(key).filter((v) => v !== option)
+
+  props.setColumnFilter?.(key, checked ? [...values, option] : values)
+}
+
+/** The ends of a date filter. */
+function range(key: string): { from?: string, to?: string } {
+  const value = props.filters?.[key]
+
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {}
+}
+
+function setRange(key: string, end: "from" | "to", day: string) {
+  const next = { ...range(key), [end]: day || undefined }
+
+  props.setColumnFilter?.(key, next.from || next.to ? next : undefined)
+}
+
+function text(key: string): string {
+  const value = props.filters?.[key]
+
+  return typeof value === "string" ? value : ""
+}
 
 // The rows per page the server actually used: its default without `?perPage`,
 // or the requested value (capped by `max_per_page`).
@@ -160,6 +223,85 @@ const showTrailingJump = computed(() => currentPage.value + PAGE_RANGE < lastPag
         class="max-w-sm"
         @update:model-value="onGlobalFilterChange(String($event))"
       />
+
+      <template v-if="showFilters">
+        <template v-for="column in filterColumns ?? []" :key="column.key">
+          <DropdownMenu v-if="column.filter.type === 'select'">
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" size="sm" class="h-9 border-dashed">
+                <ListFilter />
+                {{ filterLabel(column) }}
+                <span
+                  v-if="selected(column.key).length"
+                  class="rounded-sm bg-secondary px-1.5 text-xs font-medium text-secondary-foreground"
+                >
+                  {{ selected(column.key).length }}
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" class="max-h-72 overflow-y-auto">
+              <DropdownMenuCheckboxItem
+                v-for="option in column.filter.options ?? []"
+                :key="String(option.value)"
+                :model-value="selected(column.key).includes(String(option.value))"
+                @update:model-value="(checked) => toggleOption(column.key, String(option.value), !!checked)"
+                @select.prevent
+              >
+                {{ option.label }}
+              </DropdownMenuCheckboxItem>
+              <p v-if="!column.filter.options?.length" class="px-2 py-1.5 text-sm text-muted-foreground">
+                {{ t('No options') }}
+              </p>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div
+            v-else-if="column.filter.type === 'date'"
+            role="group"
+            :aria-label="filterLabel(column)"
+            class="flex w-full items-center gap-1 sm:w-auto"
+          >
+            <span class="pl-1 pr-0.5 text-sm text-muted-foreground" aria-hidden="true">{{ filterLabel(column) }}</span>
+            <Input
+              type="date"
+              class="h-9 min-w-0 flex-1 px-2 sm:w-[9.5rem] sm:flex-none"
+              :aria-label="t(':label from', { label: filterLabel(column) })"
+              :model-value="range(column.key).from ?? ''"
+              :max="range(column.key).to"
+              @update:model-value="setRange(column.key, 'from', String($event))"
+            />
+            <span class="text-muted-foreground" aria-hidden="true">–</span>
+            <Input
+              type="date"
+              class="h-9 min-w-0 flex-1 px-2 sm:w-[9.5rem] sm:flex-none"
+              :aria-label="t(':label to', { label: filterLabel(column) })"
+              :model-value="range(column.key).to ?? ''"
+              :min="range(column.key).from"
+              @update:model-value="setRange(column.key, 'to', String($event))"
+            />
+          </div>
+
+          <Input
+            v-else
+            class="h-9 w-[12rem]"
+            :placeholder="filterLabel(column)"
+            :aria-label="filterLabel(column)"
+            :model-value="text(column.key)"
+            @update:model-value="setColumnFilter?.(column.key, String($event))"
+          />
+        </template>
+
+        <Button
+          v-if="hasColumnFilters"
+          variant="ghost"
+          size="sm"
+          class="h-9"
+          @click="clearColumnFilters?.()"
+        >
+          <X />
+          {{ t('Clear filters') }}
+        </Button>
+      </template>
 
       <slot name="toolbar" :table="table" />
 

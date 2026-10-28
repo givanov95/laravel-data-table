@@ -74,6 +74,36 @@ class DataTableConfig
         return implode('.', [...$parent, 'timeZone']);
     }
 
+    /**
+     * The parameter that carries the filters by column: `filter[status]=paid`
+     * under the default `filter`.
+     */
+    public static function getColumnFiltersKey(): string
+    {
+        return (string) Config::get('data-table.column_filters', 'filter');
+    }
+
+    /**
+     * The column keys a filter cannot have: the other request keys that sit
+     * under the column filters' parameter (`filter.global` → `global`), so
+     * `filter[global]` stays the search.
+     *
+     * @return list<string>
+     */
+    public static function reservedFilterNames(): array
+    {
+        $prefix = self::getColumnFiltersKey().'.';
+        $names = [];
+
+        foreach ([self::getGlobalFilterKey(), self::getTrashedKey(), self::getTimeZoneKey()] as $key) {
+            if (str_starts_with($key, $prefix)) {
+                $names[] = explode('.', substr($key, strlen($prefix)))[0];
+            }
+        }
+
+        return array_values(array_unique($names));
+    }
+
     public static function getOrderingKey(): string
     {
         return (string) Config::get('data-table.ordering', 'ordering');
@@ -83,7 +113,7 @@ class DataTableConfig
      * The request keys a frontend has to send (`toArray()`'s `params`), so a
      * changed key in config/data-table.php reaches the composable too.
      *
-     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string, time_zone: string}
+     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string, time_zone: string, column_filters: string}
      */
     public static function requestKeys(): array
     {
@@ -93,6 +123,7 @@ class DataTableConfig
             'trashed' => self::getTrashedKey(),
             'ordering' => self::getOrderingKey(),
             'time_zone' => self::getTimeZoneKey(),
+            'column_filters' => self::getColumnFiltersKey(),
         ];
     }
 

@@ -1,6 +1,6 @@
 {
     "name": "@givanov95/vue-data-table",
-    "version": "4.0.1",
+    "version": "4.1.0",
     "description": "Vue 3 + Inertia data-table components and a TanStack Table composable for givanov95/laravel-data-table.",
     "license": "MIT",
     "author": "Georgi Ivanov <joroz95@gmail.com>",

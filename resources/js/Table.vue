@@ -31,6 +31,11 @@ const props = withDefaults(
          * placeholder (`/posts/?id/restore`). Without it there is no button.
          */
         restoreUrl?: string;
+        /**
+         * The field that identifies a row, for `?id` in `rowClickLink` and
+         * `restoreUrl`. Default: the model's key from the payload, else `id`.
+         */
+        rowKey?: string;
         perPageOptions?: number[];
     }>(),
     {
@@ -43,6 +48,9 @@ const thisRoute = (r() as ThisRoute | undefined) ?? { params: {} };
 // As the server applied it: a table that does not allow the archive shows
 // live rows even with `filter[trashed]=true` in the URL.
 const isTrashed = (): boolean => props.dataTable.trashed === true;
+
+const rowId = (rowData: Record<string, any>): number | string =>
+    rowData[props.rowKey ?? props.dataTable.keyName ?? "id"];
 
 const trashedKey = (): string => props.dataTable.requestKeys?.trashed ?? "filter.trashed";
 
@@ -67,7 +75,7 @@ const getRelationData = (
     return "Undefined relation";
 };
 
-const handleRowClick = (event: MouseEvent, dataId: number) => {
+const handleRowClick = (event: MouseEvent, dataId: number | string) => {
     if (
         typeof props.rowClickLink !== "undefined" &&
         !isTrashed() &&
@@ -178,7 +186,7 @@ const handleRestoreRecord = (id: number | string) => {
                                 : 'bg-white',
                             { 'cursor-pointer': isRowClickLinkSet && !isTrashed() },
                         ]"
-                        @click="handleRowClick($event, rowData.id)"
+                        @click="handleRowClick($event, rowId(rowData))"
                     >
                         <td
                             v-for="(column, key) in dataTable.columns"
@@ -243,7 +251,7 @@ const handleRestoreRecord = (id: number | string) => {
                                     v-if="restoreUrl"
                                     class="border border-[#E9E7E7] rounded-md p-1 active:scale-90 transition bg-blue-100 text-blue-500 duration-300 ease-in-out hover:bg-blue-200"
                                     :title="t('Restore')"
-                                    @click="handleRestoreRecord(rowData['id'])"
+                                    @click="handleRestoreRecord(rowId(rowData))"
                                 >
                                     <IconRestore classes="w-4 h-4" />
                                 </button>

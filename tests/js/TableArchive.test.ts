@@ -6,12 +6,12 @@ import DataTable from "../../resources/js/Table.vue";
 import { resetConfig } from "../../resources/js/config";
 import type { DataTable as DataTableType } from "../../resources/js/types";
 
-const { post, reload } = vi.hoisted(() => ({ post: vi.fn(), reload: vi.fn() }));
+const { post, reload, get } = vi.hoisted(() => ({ post: vi.fn(), reload: vi.fn(), get: vi.fn() }));
 
 vi.mock("@inertiajs/vue3", async (importOriginal) => {
     const original = await importOriginal<typeof import("@inertiajs/vue3")>();
 
-    return { ...original, router: { ...original.router, post, reload } };
+    return { ...original, router: { ...original.router, post, reload, get } };
 });
 
 type Row = { id: number; name: string };
@@ -45,6 +45,7 @@ describe("DataTable archive", () => {
         resetConfig();
         post.mockReset();
         reload.mockReset();
+        get.mockReset();
     });
 
     it("restores an archived row with a POST to restoreUrl", async () => {
@@ -54,6 +55,34 @@ describe("DataTable archive", () => {
 
         expect(post).toHaveBeenCalledWith("/posts/5/restore", {}, { preserveState: true, preserveScroll: true });
         expect(reload).not.toHaveBeenCalled();
+    });
+
+    it("identifies a row by the model's key from the payload", async () => {
+        const wrapper = mount(DataTable as any, {
+            props: {
+                dataTable: { ...payload({ trashed: true, keyName: "uid" }), data: [{ uid: 12, name: "Alice" }] },
+                restoreUrl: "/shops/?id/restore",
+            },
+            slots: { "cell(action)": () => h("a", "Edit") },
+        });
+
+        await wrapper.find("button[title='Restore']").trigger("click");
+
+        expect(post.mock.calls.at(-1)?.[0]).toBe("/shops/12/restore");
+    });
+
+    it("takes the row key from rowKey, for row clicks too", async () => {
+        const wrapper = mount(DataTable as any, {
+            props: {
+                dataTable: { ...payload({ trashed: false }), data: [{ id: 1, code: "A-1", name: "Alice" }] },
+                rowKey: "code",
+                rowClickLink: "/items/?id",
+            },
+        });
+
+        await wrapper.find("tbody td").trigger("click");
+
+        expect(get).toHaveBeenCalledWith("/items/A-1");
     });
 
     it("has no restore button without restoreUrl", () => {

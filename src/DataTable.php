@@ -63,6 +63,9 @@ class DataTable
     /** Whether the rows are the archive (soft-deleted ones), as applied. */
     public bool $trashed = false;
 
+    /** The model's key (`getKeyName()`): which field of a row identifies it, for the bundled widget. */
+    public string $keyName = 'id';
+
     /** @var Collection<string, EnumColumn> */
     private Collection $enumColumns;
 
@@ -102,6 +105,7 @@ class DataTable
         $this->request = $request ?? App::make(Request::class);
         // The model's key, not `id`: a model keyed on `uid` has no `id` column.
         $this->ordering = Ordering::fromRequest($this->request, $builder->getModel()->getKeyName());
+        $this->keyName = $builder->getModel()->getKeyName();
 
         $this->setBuilder($builder);
     }

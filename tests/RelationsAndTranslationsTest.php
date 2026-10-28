@@ -105,6 +105,14 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame([10, 12, 11], $this->uids($table));
     }
 
+    public function testTheDefaultSerializationNamesTheModelsKey(): void
+    {
+        $table = (new DataTable(RlShop::query(), $this->request([])))->process();
+
+        $this->assertSame('uid', $table->keyName);
+        $this->assertSame('uid', json_decode((string) json_encode($table), true)['keyName']);
+    }
+
     public function testShowsTheTranslationOfTheColumnsLocale(): void
     {
         $table = (new DataTable(RlShop::query(), $this->request([])))

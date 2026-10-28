@@ -18,6 +18,8 @@
 - Removed: the `restore_id` config key, `DataTableConfig::getRestoreIdKey()`,
   `DataTableParams::$restoreId`, and `restore_id` from `toArray()['params']`.
 - `toArray()['state']['trashed']` is the archive as applied, not as requested.
+- `QueryBuilderTable` takes its default page size from `data-table.default_per_page`, like
+  `DataTable`, instead of a hard-coded 15. `->defaultPerPage(n)` still overrides it per table.
 - Frontend: `useLaravelDataTable` takes `restoreUrl` (`'/posts/?id/restore'` or a function of the
   id) and `onRestore(id)` POSTs there; without it, it does nothing. The `DataTable` component takes
   `restore-url` and shows the restore button only with it. `restore_id` is gone from
@@ -38,6 +40,8 @@
 4. Drop any code that reads `restore_id` (e.g. a controller that restored on `?restore_id=`) and
    the workarounds that built `DataTableParams` by hand to keep `filter[trashed]` / `restore_id`
    out.
+5. A `QueryBuilderTable` without `->defaultPerPage()` now lists `default_per_page` rows (15 if the
+   app has no config of its own).
 
 ## v3.5.1
 

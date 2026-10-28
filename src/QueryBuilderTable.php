@@ -43,7 +43,8 @@ class QueryBuilderTable
 
     private string $defaultSortDirection = 'desc';
 
-    private int $defaultPerPage = 15;
+    /** Null: `data-table.default_per_page`. */
+    private ?int $defaultPerPage = null;
 
     private ?int $maxPerPage = null;
 
@@ -272,7 +273,7 @@ class QueryBuilderTable
     {
         return DataTableParams::clampPerPage(
             $this->request->input(DataTableConfig::getPerPageKey()),
-            $this->defaultPerPage,
+            $this->defaultPerPage ?? DataTableConfig::getDefaultPerPage(),
             $this->maxPerPage ?? DataTableConfig::getMaxPerPage(),
         );
     }

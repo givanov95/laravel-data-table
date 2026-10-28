@@ -397,6 +397,23 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(50, $payload['meta']['per_page']);
     }
 
+    public function testTheDefaultPageSizeComesFromTheConfig(): void
+    {
+        Config::set('data-table.default_per_page', 2);
+
+        $this->assertSame(2, $this->table(Request::create('/'))->toArray()['meta']['per_page']);
+
+        // A table's own default wins over the config.
+        $this->assertSame(1, $this->table(Request::create('/'))->defaultPerPage(1)->toArray()['meta']['per_page']);
+
+        // max_per_page bounds both.
+        Config::set('data-table.default_per_page', 20);
+        Config::set('data-table.max_per_page', 5);
+
+        $this->assertSame(5, $this->table(Request::create('/'))->toArray()['meta']['per_page']);
+        $this->assertSame(5, $this->table(Request::create('/'))->defaultPerPage(25)->toArray()['meta']['per_page']);
+    }
+
     public function testMaxPerPageRejectsNonPositiveValues(): void
     {
         $this->expectException(InvalidArgumentException::class);

@@ -189,8 +189,9 @@ works too.
 
 The page size is bounded by `data-table.max_per_page` (see
 [Configuration](#configuration)); call `->maxPerPage(50)` to override it for a
-single table (it throws `InvalidArgumentException` below 1), and
-`->defaultPerPage(25)` to change the fallback.
+single table (it throws `InvalidArgumentException` below 1). Without
+`?perPage` the page size is `data-table.default_per_page`, like in `DataTable`;
+`->defaultPerPage(25)` overrides it for a single table.
 
 Use `DataTable` for column-rich tables; use `QueryBuilderTable` for lean listings
 that want spatie's query power behind a small, reusable facade.

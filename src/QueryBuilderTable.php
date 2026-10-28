@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Givanov95\DataTable;
 
 use Closure;
+use Givanov95\DataTable\Support\Archive;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -35,6 +36,8 @@ class QueryBuilderTable
     private ?Closure $transform = null;
 
     private bool $allowTrashed = false;
+
+    private ?string $trashedAbility = null;
 
     private string $defaultSortKey = 'id';
 
@@ -90,10 +93,17 @@ class QueryBuilderTable
         return $this;
     }
 
-    /** @return $this */
-    public function allowTrashed(bool $allow = true): self
+    /**
+     * Let the `trashed` toggle add the soft-deleted rows. With an ability, only
+     * users the gate allows it for the model class get them; for the rest, and
+     * for a model without SoftDeletes, the toggle is accepted and ignored.
+     *
+     * @return $this
+     */
+    public function allowTrashed(bool $allow = true, ?string $ability = null): self
     {
         $this->allowTrashed = $allow;
+        $this->trashedAbility = $ability;
 
         return $this;
     }
@@ -143,8 +153,8 @@ class QueryBuilderTable
      */
     public function toArray(): array
     {
-        $trashed = $this->allowTrashed
-            && filter_var($this->request->input(DataTableConfig::getTrashedKey()), FILTER_VALIDATE_BOOLEAN);
+        $trashed = filter_var($this->request->input(DataTableConfig::getTrashedKey()), FILTER_VALIDATE_BOOLEAN)
+            && Archive::available($this->allowTrashed, $this->query->getModel(), $this->trashedAbility);
 
         // Spatie sorts and paginates the very builder it is given, so work on a copy: the
         // caller's builder stays as it was, and toArray() can be called again.

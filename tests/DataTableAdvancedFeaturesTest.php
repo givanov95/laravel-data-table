@@ -9,11 +9,15 @@ use Givanov95\DataTable\Columns\TranslatableColumn;
 use Givanov95\DataTable\DataTable;
 use Givanov95\DataTable\RawOrdering;
 use Givanov95\DataTable\Tests\Fixtures\Author;
+use Givanov95\DataTable\Tests\Fixtures\DenyingPostPolicy;
 use Givanov95\DataTable\Tests\Fixtures\Post;
 use Givanov95\DataTable\Tests\Fixtures\PostPolicy;
 use Givanov95\DataTable\Tests\Fixtures\Status;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 
 final class DataTableAdvancedFeaturesTest extends TestCase
@@ -192,70 +196,178 @@ final class DataTableAdvancedFeaturesTest extends TestCase
 
         $table = (new DataTable(Post::query(), $trashedRequest))
             ->setColumn('id', '#')
+            ->allowTrashed()
             ->process();
 
         $this->assertCount(1, $table->getData());
         $this->assertSame(1, $table->getData()->first()->id);
+        $this->assertTrue($table->trashed);
+        $this->assertTrue($table->toArray()['state']['trashed']);
     }
 
-    public function testSoftRestoreReinstatesDeletedRecord(): void
+    public function testTheArchiveIsIgnoredUnlessTheTableAllowsIt(): void
     {
-        $post = Post::find(2);
-        $post->delete();
-        $this->assertNotNull($post->fresh()->deleted_at);
+        Post::find(1)->delete();
 
-        $request = Request::create('/', 'GET', ['restore_id' => 2]);
+        $table = (new DataTable(Post::query(), Request::create('/', 'GET', ['filter' => ['trashed' => 'true']])))
+            ->setColumn('id', '#')
+            ->process();
 
-        // Register a permissive policy so SoftRestorer's authorize() call passes.
-        \Illuminate\Support\Facades\Gate::policy(Post::class, PostPolicy::class);
+        $this->assertEqualsCanonicalizing([2, 3], $table->getData()->pluck('id')->all());
+        $this->assertFalse($table->trashed);
+        $this->assertFalse($table->toArray()['state']['trashed']);
+    }
+
+    public function testTheArchiveIsIgnoredForAModelWithoutSoftDeletes(): void
+    {
+        $table = (new DataTable(Author::query(), Request::create('/', 'GET', ['filter' => ['trashed' => 'true']])))
+            ->setColumn('id', '#')
+            ->allowTrashed()
+            ->process();
+
+        $this->assertCount(2, $table->getData());
+        $this->assertFalse($table->toArray()['state']['trashed']);
+    }
+
+    public function testTheArchiveFollowsTheAbility(): void
+    {
+        Post::find(1)->delete();
+        $request = Request::create('/', 'GET', ['filter' => ['trashed' => 'true']]);
+        $seen = [];
+        Gate::define('viewArchive', function (?object $user, string $model) use (&$seen): bool {
+            $seen[] = $model;
+
+            return false;
+        });
+
+        $denied = (new DataTable(Post::query(), $request))
+            ->setColumn('id', '#')
+            ->allowTrashed(ability: 'viewArchive')
+            ->process();
+
+        $this->assertEqualsCanonicalizing([2, 3], $denied->getData()->pluck('id')->all());
+        $this->assertFalse($denied->toArray()['state']['trashed']);
+        $this->assertSame([Post::class], $seen);
+
+        Gate::define('viewArchive', fn (?object $user): bool => true);
+
+        $allowed = (new DataTable(Post::query(), $request))
+            ->setColumn('id', '#')
+            ->allowTrashed(ability: 'viewArchive')
+            ->process();
+
+        $this->assertSame([1], $allowed->getData()->pluck('id')->all());
+    }
+
+    public function testRestoreIdInTheQueryStringNoLongerRestores(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
+
+        $request = Request::create('/', 'GET', ['restore_id' => 2, 'filter' => ['trashed' => 'true']]);
 
         (new DataTable(Post::query(), $request))
             ->setColumn('id', '#')
+            ->allowTrashed()
             ->process();
 
-        $this->assertNull(Post::find(2)->deleted_at);
+        $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
     }
 
-    public function testSoftRestoreOnlyFindsRecordsOfTheTablesQuery(): void
+    public function testRestoreReinstatesADeletedRecord(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
+
+        $response = (new DataTable(Post::query(), Request::create('/', 'POST')))
+            ->allowTrashed()
+            ->restore(2);
+
+        $this->assertNull(Post::find(2)->deleted_at);
+        $this->assertTrue($response->isRedirect());
+    }
+
+    public function testRestoreChecksTheRestorePolicy(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, DenyingPostPolicy::class);
+
+        try {
+            (new DataTable(Post::query(), Request::create('/', 'POST')))->allowTrashed()->restore(2);
+            $this->fail('The restore policy must be checked.');
+        } catch (AuthorizationException) {
+        }
+
+        $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
+    }
+
+    public function testRestoreOnlyFindsRecordsOfTheTablesQuery(): void
     {
         // Post 3 is Bob's; the table lists Alice's posts only.
         Post::find(3)->delete();
-        \Illuminate\Support\Facades\Gate::policy(Post::class, PostPolicy::class);
+        Post::find(2)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
 
-        try {
-            (new DataTable(Post::query()->where('author_id', 1), Request::create('/', 'GET', ['restore_id' => 3])))
-                ->setColumn('id', '#')
-                ->process();
-            $this->fail('A record outside the table must not be found.');
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-        }
+        $table = fn () => (new DataTable(Post::query()->where('author_id', 1), Request::create('/', 'POST')))->allowTrashed();
 
+        $this->assertNotFound(fn () => $table()->restore(3));
         $this->assertNotNull(Post::withTrashed()->find(3)->deleted_at);
 
-        // One of the table's own records is restored as before.
-        Post::find(2)->delete();
-        (new DataTable(Post::query()->where('author_id', 1), Request::create('/', 'GET', ['restore_id' => 2])))
-            ->setColumn('id', '#')
-            ->process();
-
+        // One of the table's own records is restored.
+        $table()->restore(2);
         $this->assertNull(Post::find(2)->deleted_at);
     }
 
-    public function testSoftRestoreAlsoHonoursTheScopeOfTheProcessCallback(): void
+    public function testRestoreHonoursTheScope(): void
     {
         Post::find(3)->delete();
-        \Illuminate\Support\Facades\Gate::policy(Post::class, PostPolicy::class);
-        $request = Request::create('/', 'GET', ['restore_id' => 3, 'filter' => ['trashed' => 'true']]);
+        Gate::policy(Post::class, PostPolicy::class);
 
-        try {
-            (new DataTable(Post::query(), $request))
-                ->setColumn('id', '#')
-                ->process(null, fn ($q) => $q->where('author_id', 1));
-            $this->fail('A record outside the callback scope must not be found.');
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-        }
+        $this->assertNotFound(fn () => (new DataTable(Post::query(), Request::create('/', 'POST')))
+            ->allowTrashed()
+            ->restore(3, fn ($q) => $q->where('author_id', 1)));
 
         $this->assertNotNull(Post::withTrashed()->find(3)->deleted_at);
+    }
+
+    public function testRestoreFindsOnlyArchivedRecords(): void
+    {
+        Gate::policy(Post::class, PostPolicy::class);
+
+        $this->assertNotFound(fn () => (new DataTable(Post::query(), Request::create('/', 'POST')))->allowTrashed()->restore(2));
+    }
+
+    public function testRestoreNeedsTheArchive(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
+
+        // Not allowed for the table.
+        $this->assertNotFound(fn () => (new DataTable(Post::query(), Request::create('/', 'POST')))->restore(2));
+
+        // A model without SoftDeletes: a 404, not a BadMethodCallException.
+        $this->assertNotFound(fn () => (new DataTable(Author::query(), Request::create('/', 'POST')))->allowTrashed()->restore(1));
+
+        // The ability of allowTrashed() refuses: a 403.
+        Gate::define('viewArchive', fn (?object $user): bool => false);
+
+        try {
+            (new DataTable(Post::query(), Request::create('/', 'POST')))->allowTrashed(ability: 'viewArchive')->restore(2);
+            $this->fail('The ability must be checked.');
+        } catch (AuthorizationException) {
+        }
+
+        $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
+    }
+
+    private function assertNotFound(callable $restore): void
+    {
+        try {
+            $restore();
+            $this->fail('The record must not be found.');
+        } catch (ModelNotFoundException) {
+            $this->addToAssertionCount(1);
+        }
     }
 
     public function testRawOrderingReportsWhatItSaysItAmountsTo(): void
@@ -286,7 +398,6 @@ final class DataTableAdvancedFeaturesTest extends TestCase
             'global_filter' => 'filter.search',
             'trashed'       => 'filter.trashed',
             'ordering'      => 'ordering',
-            'restore_id'    => 'restore_id',
         ], $params);
     }
 

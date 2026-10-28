@@ -17,7 +17,6 @@ final class DataTableConfigTest extends TestCase
         $this->assertSame('filter.global', DataTableConfig::getGlobalFilterKey());
         $this->assertSame('perPage', DataTableConfig::getPerPageKey());
         $this->assertSame('filter.trashed', DataTableConfig::getTrashedKey());
-        $this->assertSame('restore_id', DataTableConfig::getRestoreIdKey());
         $this->assertSame('ordering', DataTableConfig::getOrderingKey());
         $this->assertSame(15, DataTableConfig::getDefaultPerPage());
         $this->assertSame(100, DataTableConfig::getMaxPerPage());

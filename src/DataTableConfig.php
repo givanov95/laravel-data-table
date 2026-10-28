@@ -37,11 +37,6 @@ class DataTableConfig
         return (string) Config::get('data-table.trashed', 'filter.trashed');
     }
 
-    public static function getRestoreIdKey(): string
-    {
-        return (string) Config::get('data-table.restore_id', 'restore_id');
-    }
-
     public static function getOrderingKey(): string
     {
         return (string) Config::get('data-table.ordering', 'ordering');
@@ -51,7 +46,7 @@ class DataTableConfig
      * The request keys a frontend has to send (`toArray()`'s `params`), so a
      * changed key in config/data-table.php reaches the composable too.
      *
-     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string, restore_id: string}
+     * @return array{per_page: string, global_filter: string, trashed: string, ordering: string}
      */
     public static function requestKeys(): array
     {
@@ -60,7 +55,6 @@ class DataTableConfig
             'global_filter' => self::getGlobalFilterKey(),
             'trashed' => self::getTrashedKey(),
             'ordering' => self::getOrderingKey(),
-            'restore_id' => self::getRestoreIdKey(),
         ];
     }
 

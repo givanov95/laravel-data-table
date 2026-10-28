@@ -11,13 +11,17 @@ use Givanov95\DataTable\Columns\PriceColumn;
 use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Columns\TranslatableColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
+use Givanov95\DataTable\Support\Archive;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Server-side DataTable builder for Laravel. Wraps an Eloquent query, applies
@@ -41,6 +45,17 @@ class DataTable
     /** @var Collection<string, TranslatableColumn> */
     public Collection $translatableColumns;
 
+    /**
+     * The request keys of config/data-table.php, for the bundled widget (it
+     * gets the object's default serialization, not toArray()).
+     *
+     * @var array<string, string>
+     */
+    public array $requestKeys = [];
+
+    /** Whether the rows are the archive (soft-deleted ones), as applied. */
+    public bool $trashed = false;
+
     /** @var Collection<string, EnumColumn> */
     private Collection $enumColumns;
 
@@ -60,6 +75,10 @@ class DataTable
     private Ordering $ordering;
 
     private DataTableParams $params;
+
+    private bool $trashedAllowed = false;
+
+    private ?string $trashedAbility = null;
 
     private readonly Request $request;
 
@@ -90,6 +109,7 @@ class DataTable
     ): self {
         $params ??= DataTableParams::fromRequest($this->request);
         $this->params = $params;
+        $this->requestKeys = DataTableConfig::requestKeys();
 
         $this->initRelations();
         $this->applyModelFiltering($params);
@@ -101,9 +121,6 @@ class DataTable
         }
 
         $this->applyCallbackBeforePaginate($callbackBeforePaginate);
-        // After every narrowing of the query (the callback scopes it to a tenant, say),
-        // before the page is read, so the restored record leaves the archive at once.
-        $this->softRestoreRecord($params);
 
         /** @var LengthAwarePaginatorContract $lengthAwarePaginator */
         $lengthAwarePaginator = $this->getBuilder()->paginate($params->perPage);
@@ -124,6 +141,58 @@ class DataTable
         });
 
         return $this;
+    }
+
+    /**
+     * Let the request show the archive (`filter[trashed]=true`): the
+     * soft-deleted rows instead of the live ones. Off by default. With an
+     * ability, only users the gate allows it for the model class
+     * (`Gate::allows($ability, Post::class)`) get the archive; for the rest,
+     * and for a model without SoftDeletes, the parameter is ignored.
+     */
+    public function allowTrashed(bool $allow = true, ?string $ability = null): self
+    {
+        $this->trashedAllowed = $allow;
+        $this->trashedAbility = $ability;
+
+        return $this;
+    }
+
+    /**
+     * Restore a soft-deleted record of this table, from the POST route of the
+     * app: the record is looked up through the table's query (and `$scope`,
+     * the same narrowing as the callback given to process()), so a record the
+     * table does not list is a 404. Then the `restore` policy is checked.
+     *
+     * The archive has to be allowed (`allowTrashed()`) and the model has to use
+     * SoftDeletes, or it is a 404; the ability of `allowTrashed()`, if any, has
+     * to pass, or it is a 403.
+     *
+     * @param ?callable(Builder):void $scope
+     */
+    public function restore(int|string $id, ?callable $scope = null): RedirectResponse
+    {
+        $builder = clone $this->getBuilder();
+        $model = $builder->getModel();
+
+        if (! $this->trashedAllowed || ! Archive::supports($model)) {
+            throw (new ModelNotFoundException())->setModel($model::class, [$id]);
+        }
+
+        if ($this->trashedAbility !== null) {
+            Gate::authorize($this->trashedAbility, $model::class);
+        }
+
+        if ($scope !== null) {
+            $builder->where(function ($query) use ($scope) {
+                $scope($query);
+            });
+        }
+
+        /** @phpstan-ignore-next-line — onlyTrashed() is provided by the SoftDeletes scope. */
+        $record = $builder->onlyTrashed()->findOrFail($id);
+
+        return (new SoftRestorer($record))->restore();
     }
 
     /**
@@ -331,28 +400,15 @@ class DataTable
 
     private function applyModelFiltering(DataTableParams $params): void
     {
-        if ($params->trashed !== 'true') {
+        $this->trashed = $params->trashed === 'true'
+            && Archive::available($this->trashedAllowed, $this->getBuilder()->getModel(), $this->trashedAbility);
+
+        if (! $this->trashed) {
             return;
         }
 
         $modelFiltering = (new ModelFiltering())->onlyTrashed();
         $this->setBuilder($modelFiltering->apply($this->getBuilder()));
-    }
-
-    private function softRestoreRecord(DataTableParams $params): void
-    {
-        if (! $params->restoreId) {
-            return;
-        }
-
-        // Through the table's own query, so a record outside the list (another
-        // tenant's, say, or one the search does not show) is a 404 instead of
-        // being restored by its id.
-        $model = (clone $this->getBuilder())
-            ->withTrashed()
-            ->findOrFail($params->restoreId);
-
-        (new SoftRestorer($model))->restore();
     }
 
     private function applyGlobalFilter(string $searchText): self
@@ -789,7 +845,7 @@ class DataTable
      *       'meta'    => [ current_page, per_page, total, last_page, from, to ],
      *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
      *       'state'   => [ search, sort => [column, direction] | null, trashed ],
-     *       'params'  => [ per_page, global_filter, trashed, ordering, restore_id ],   // request keys
+     *       'params'  => [ per_page, global_filter, trashed, ordering ],   // request keys
      *     ]
      *
      * Call it explicitly (`->process()->toArray()`); the default serialization
@@ -830,9 +886,9 @@ class DataTable
             'state' => [
                 'search' => $this->params->globalFilter ?? '',
                 'sort' => $this->appliedSort(),
-                'trashed' => $this->params->trashed === 'true',
+                'trashed' => $this->trashed,
             ],
-            'params' => DataTableConfig::requestKeys(),
+            'params' => $this->requestKeys,
         ];
     }
 

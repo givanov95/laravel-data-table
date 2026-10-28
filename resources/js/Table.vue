@@ -26,6 +26,11 @@ const props = withDefaults(
         selectedRowIndexes?: Array<string | number>;
         selectedRowColumn?: string;
         rowClickLink?: string;
+        /**
+         * Where the restore button of an archived row POSTs, with an `?id`
+         * placeholder (`/posts/?id/restore`). Without it there is no button.
+         */
+        restoreUrl?: string;
         perPageOptions?: number[];
     }>(),
     {
@@ -35,12 +40,11 @@ const props = withDefaults(
 
 const thisRoute = (r() as ThisRoute | undefined) ?? { params: {} };
 
-const isTrashed = (): boolean => {
-    return (
-        !!thisRoute.params?.filter?.trashed &&
-        thisRoute.params.filter.trashed === "true"
-    );
-};
+// As the server applied it: a table that does not allow the archive shows
+// live rows even with `filter[trashed]=true` in the URL.
+const isTrashed = (): boolean => props.dataTable.trashed === true;
+
+const trashedKey = (): string => props.dataTable.requestKeys?.trashed ?? "filter.trashed";
 
 let previousOrderingKey: string | null = null;
 let previousOrderingDirection: string | null = null;
@@ -100,19 +104,15 @@ const handleSort = async (isOrderable: boolean, key: string) => {
     previousOrderingDirection = orderingDirection;
 };
 
-const handleRestoreRecord = async (id: number) => {
-    await new Promise((resolve, reject) => {
-        router.reload({
-            data: { restore_id: id },
-            only: [props.propName],
-            onSuccess: resolve,
-            onError: reject,
-        });
-    });
+// A POST: a GET that changes data could be triggered from another site. The
+// route redirects back, so the rows and the page's flash messages come back fresh.
+const handleRestoreRecord = (id: number | string) => {
+    if (!props.restoreUrl) return;
 
-    const currentUrl = new URL(window.location.href);
-    currentUrl.searchParams.delete("restore_id");
-    router.replace({ url: currentUrl.toString() });
+    router.post(replacePlaceholder(props.restoreUrl, id), {}, {
+        preserveState: true,
+        preserveScroll: true,
+    });
 };
 </script>
 
@@ -123,7 +123,12 @@ const handleRestoreRecord = async (id: number) => {
     >
         <GlobalSearch v-if="globalSearch" :prop-name="propName" />
 
-        <TrashedRecords v-if="showTrashed" :prop-name="propName" />
+        <TrashedRecords
+            v-if="showTrashed"
+            :prop-name="propName"
+            :trashed-key="trashedKey()"
+            :trashed="isTrashed()"
+        />
 
         <div
             v-if="$slots.advancedFilters || $slots.additionalContent"
@@ -235,6 +240,7 @@ const handleRestoreRecord = async (id: number) => {
                                 "
                             >
                                 <button
+                                    v-if="restoreUrl"
                                     class="border border-[#E9E7E7] rounded-md p-1 active:scale-90 transition bg-blue-100 text-blue-500 duration-300 ease-in-out hover:bg-blue-200"
                                     :title="t('Restore')"
                                     @click="handleRestoreRecord(rowData['id'])"

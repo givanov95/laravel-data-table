@@ -62,6 +62,21 @@ export function camelCaseToSnakeCase(input: string): string {
     return input.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
 }
 
+/** `filter.trashed` → `filter[trashed]`, the form a key has in a query string. */
+export function queryKeyOf(dotted: string): string {
+    return dotted
+        .split(".")
+        .map((part, i) => (i === 0 ? part : `[${part}]`))
+        .join("");
+}
+
+/** `filter.trashed`, `true` → `{ filter: { trashed: true } }`, for Inertia's `data` (typed as it takes it). */
+export function nestedOf(dotted: string, value: unknown): Record<string, any> {
+    return dotted
+        .split(".")
+        .reduceRight<unknown>((nested, part) => ({ [part]: nested }), value) as Record<string, any>;
+}
+
 export function replacePlaceholder(
     inputString: string,
     replacement: number | string,

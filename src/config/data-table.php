@@ -26,16 +26,16 @@ return [
     | the Vue components bundled with the package send the defaults below.
     |
     | `ordering` is the parameter that carries `key` and `direction`
-    | (`ordering[key]`, `ordering[direction]`). `restore_id` is only read by
-    | DataTable. QueryBuilderTable takes the search and trashed keys from
-    | anywhere in the request; when they sit under Spatie's filter parameter
-    | (`filter.search`), that filter is accepted without being applied by Spatie.
+    | (`ordering[key]`, `ordering[direction]`). `trashed` is read only by a
+    | table that calls allowTrashed(). QueryBuilderTable takes the search and
+    | trashed keys from anywhere in the request; when they sit under Spatie's
+    | filter parameter (`filter.search`), that filter is accepted without being
+    | applied by Spatie.
     |
     */
     'global_filter' => 'filter.global',
     'per_page'      => 'perPage',
     'trashed'       => 'filter.trashed',
-    'restore_id'    => 'restore_id',
     'ordering'      => 'ordering',
 
     /*

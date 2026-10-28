@@ -15,7 +15,6 @@ final class DataTableParams
         public ?string $globalFilter = null,
         public int $perPage = 15,
         public ?string $trashed = null,
-        public ?int $restoreId = null,
     ) {
     }
 
@@ -26,9 +25,6 @@ final class DataTableParams
      */
     public static function fromRequest(Request $request): self
     {
-        // A whole number or nothing: `(int) ['x']` would be 1, the id of a real row.
-        $restoreId = filter_var($request->input(DataTableConfig::getRestoreIdKey()), FILTER_VALIDATE_INT);
-
         return new self(
             globalFilter: self::scalarToString($request->input(DataTableConfig::getGlobalFilterKey())),
             perPage: self::clampPerPage(
@@ -37,7 +33,6 @@ final class DataTableParams
                 DataTableConfig::getMaxPerPage(),
             ),
             trashed: self::scalarToString($request->input(DataTableConfig::getTrashedKey())),
-            restoreId: $restoreId === false ? null : $restoreId,
         );
     }
 

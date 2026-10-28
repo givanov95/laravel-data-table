@@ -71,7 +71,6 @@ return [
     'global_filter' => 'filter.global',
     'per_page'      => 'perPage',
     'trashed'       => 'filter.trashed',
-    'restore_id'    => 'restore_id',
     'ordering'      => 'ordering',
 
     'default_per_page' => 15,
@@ -80,9 +79,9 @@ return [
 ```
 
 These keys map directly to the HTTP query parameters the frontend sends, and
-both `DataTable` and `QueryBuilderTable` read them (`restore_id` is only used
-by `DataTable`). `ordering` is the parameter that carries `ordering[key]` and
-`ordering[direction]`. The Vue components bundled with the package send the
+both `DataTable` and `QueryBuilderTable` read them (`trashed` only when the
+table calls `allowTrashed()`). `ordering` is the parameter that carries
+`ordering[key]` and `ordering[direction]`. The Vue components bundled with the package send the
 defaults above, so changing a key means pairing it with your own frontend.
 
 The page size read from the request is bounded: anything above `max_per_page`
@@ -184,6 +183,10 @@ keeps tolerating `filter[global]`, `filter[timeZone]` and (with `allowTrashed()`
 `filter[trashed]`. A search key outside that parameter (`'global_filter' => 'q'`)
 works too.
 
+`allowTrashed(ability: 'viewArchive')` shows the soft-deleted rows only to users
+`Gate::allows('viewArchive', User::class)`; for the rest, and for a model without
+`SoftDeletes`, the `trashed` toggle is accepted and ignored (no 400, no 500).
+
 The page size is bounded by `data-table.max_per_page` (see
 [Configuration](#configuration)); call `->maxPerPage(50)` to override it for a
 single table (it throws `InvalidArgumentException` below 1), and
@@ -267,6 +270,47 @@ $table->process(null, function ($query) {
 $table->advancedSearch(fn ($q) => $q->whereJsonContains('tags', 'featured'));
 ```
 
+### Archive and restore
+
+The archive (soft-deleted rows) is off unless the table turns it on. Without
+`allowTrashed()`, `filter[trashed]=true` is ignored and the live rows are listed.
+
+```php
+$table->allowTrashed();                          // anyone who sees the list
+$table->allowTrashed(ability: 'viewArchive');    // Gate::allows('viewArchive', Post::class)
+```
+
+With an ability, users the gate refuses get the live rows (the parameter is
+ignored, not a 403). A model without `SoftDeletes` never shows an archive, so
+calling `allowTrashed()` on it is harmless. `toArray()['state']['trashed']` (and
+`$table->trashed` in the default serialization) is what was applied.
+
+Restoring is a POST route of the app, never a query parameter of the list (a
+GET that changes data can be triggered from another site). Build the table the
+same way as for the list and call `restore()`:
+
+```php
+// routes/web.php
+Route::post('posts/{id}/restore', [PostController::class, 'restore'])->name('posts.restore');
+
+// PostController
+public function restore(int $id)
+{
+    return $this->posts->table()->restore($id, fn ($q) => $q->where('team_id', auth()->user()->team_id));
+}
+```
+
+`restore($id, $scope)` looks the record up through the table's query and
+`$scope` (pass the same narrowing as the callback of `process()`), among the
+archived rows only, so a record the table does not list is a 404. It then
+checks the `restore` policy (`authorize('restore', $record)`), restores the
+record and redirects back with a `success` flash message. It is a 404 when the
+table has no `allowTrashed()` or the model has no `SoftDeletes`, and a 403 when
+the ability of `allowTrashed()` refuses.
+
+On the frontend, pass the route to the composable (`restoreUrl`) or to the
+`DataTable` component (`restore-url`); see below.
+
 ---
 
 ## Frontend usage
@@ -301,7 +345,8 @@ defineProps<{
 | `dataTable`          | `DataTableType<T>`            | The payload returned by `(new DataTable(...))->process()` |
 | `propName`           | `string` (default `dataTable`) | Inertia prop key for partial reloads                  |
 | `globalSearch`       | `boolean`                     | Show the global search input                          |
-| `showTrashed`        | `boolean`                     | Show the "trashed" toggle                             |
+| `showTrashed`        | `boolean`                     | Show the "trashed" toggle (needs `allowTrashed()`)    |
+| `restoreUrl`         | `string`                      | POST URL (use `?id`) of the restore button on archived rows; no button without it |
 | `advancedFilters`    | `boolean`                     | Reserve space for the advanced-filters slot           |
 | `selectedRowIndexes` | `(string \| number)[]`        | Highlight matching rows                               |
 | `selectedRowColumn`  | `string`                      | Column to match against `selectedRowIndexes`          |
@@ -418,8 +463,10 @@ const columns: DataTableColumnDef<Row>[] = [
 
 `useLaravelDataTable(payload, options)` options: `propName` (default
 `dataTable`), `alsoReload` (other props to refresh with the table, e.g. the
-page's own filters), `searchDebounceMs` (1200) and `perPageOptions`
-(`[10, 20, 50, 100]`; the applied size is always offered). The table follows
+page's own filters), `searchDebounceMs` (1200), `perPageOptions`
+(`[10, 20, 50, 100]`; the applied size is always offered) and `restoreUrl`
+(`'/posts/?id/restore'` or `(id) => route('posts.restore', id)`): `onRestore(id)`
+POSTs there and does nothing without it. The table follows
 the server's applied state (`state.sort`, `state.search`, `state.trashed`), so
 back/forward and shared links stay right; a new sort, page size, search or
 archive goes back to page 1. `clearSearch(data)` empties the search box and
@@ -460,6 +507,8 @@ anything that can grow: `DataTable` loads every row.
 - `setOrdering(Ordering $ordering): self`
 - `setRawOrdering(?RawOrdering $rawOrdering): self`
 - `process(?DataTableParams $params = null, ?callable $callbackBeforePaginate = null): self`
+- `allowTrashed(bool $allow = true, ?string $ability = null): self`
+- `restore(int|string $id, ?callable $scope = null): RedirectResponse`
 - `advancedSearch(callable $callback): self`
 - `getData(): Collection`
 - `getPaginator(): Paginator`

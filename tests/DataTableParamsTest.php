@@ -6,32 +6,12 @@ namespace Givanov95\DataTable\Tests;
 
 use Givanov95\DataTable\DataTableParams;
 use Illuminate\Http\Request;
-use PHPUnit\Framework\Attributes\DataProvider;
 
 final class DataTableParamsTest extends TestCase
 {
-    /**
-     * @return array<string, array{mixed, int|null}>
-     */
-    public static function restoreIdProvider(): array
+    public function testRestoreIdIsNoLongerAParam(): void
     {
-        return [
-            'a plain id'               => ['7', 7],
-            'no id'                    => [null, null],
-            'text'                     => ['abc', null],
-            'an id with trailing text' => ['12abc', null],
-            // (int) ['x'] is 1, which would restore the row with id 1.
-            'an array'       => [['x'], null],
-            'an empty array' => [[], null],
-        ];
-    }
-
-    #[DataProvider('restoreIdProvider')]
-    public function testRestoreIdIsOnlyTakenFromAWholeNumber(mixed $requested, ?int $expected): void
-    {
-        $request = Request::create('/', 'GET', $requested === null ? [] : ['restore_id' => $requested]);
-
-        $this->assertSame($expected, DataTableParams::fromRequest($request)->restoreId);
+        $this->assertFalse(property_exists(DataTableParams::class, 'restoreId'));
     }
 
     public function testAnArrayAsTheSearchOrTheTrashedToggleIsTreatedAsMissing(): void

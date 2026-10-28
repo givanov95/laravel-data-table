@@ -1,5 +1,44 @@
 # Changelog
 
+## v4.0.0
+
+### Breaking
+- **The archive is opt-in.** `DataTable` showed the soft-deleted rows to anyone who added
+  `?filter[trashed]=true` to a list. Now it needs `->allowTrashed()`; without it the parameter is
+  ignored and the live rows are listed. `allowTrashed(ability: 'viewArchive')` (on `DataTable` and
+  `QueryBuilderTable`) also asks the gate: `Gate::allows('viewArchive', Model::class)`; a refused user
+  gets the live rows. A model without `SoftDeletes` never shows an archive: no
+  `BadMethodCallException` (500) from `?filter[trashed]=true` any more, in either class.
+- **Restoring is a POST.** `?restore_id=N` restored a record in the middle of `process()`, so a link
+  or an `<img>` on another site could restore records as the signed-in user. `process()` no longer
+  restores anything. The app adds a POST route that calls `$table->restore($id, $scope)`: the record
+  is found among the archived rows of the table's query (and `$scope`), or it is a 404; the
+  `restore` policy is checked; the response redirects back with a `success` flash message.
+  `restore()` is a 404 without `allowTrashed()` or `SoftDeletes`, a 403 when its ability refuses.
+- Removed: the `restore_id` config key, `DataTableConfig::getRestoreIdKey()`,
+  `DataTableParams::$restoreId`, and `restore_id` from `toArray()['params']`.
+- `toArray()['state']['trashed']` is the archive as applied, not as requested.
+- Frontend: `useLaravelDataTable` takes `restoreUrl` (`'/posts/?id/restore'` or a function of the
+  id) and `onRestore(id)` POSTs there; without it, it does nothing. The `DataTable` component takes
+  `restore-url` and shows the restore button only with it. `restore_id` is gone from
+  `LaravelDataTableParams`.
+
+### Added
+- The default serialization of `DataTable` (the bundled `DataTable` component's payload) carries
+  `requestKeys` and `trashed`. The component and its archive toggle read the `trashed` key from
+  there instead of a hard-coded `filter[trashed]`, and whether the rows are archived from the
+  server instead of the URL.
+
+### Migration from 3.x
+1. Call `->allowTrashed()` (optionally with an ability) on every table that has an archive toggle.
+2. Add a POST route for restoring that returns `$table->restore($id, $scope)` — build the table
+   as for the list and pass the same narrowing as the callback of `process()` as `$scope`.
+3. Pass that route as `restoreUrl` to `useLaravelDataTable()` or as `restore-url` to the
+   `DataTable` component.
+4. Drop any code that reads `restore_id` (e.g. a controller that restored on `?restore_id=`) and
+   the workarounds that built `DataTableParams` by hand to keep `filter[trashed]` / `restore_id`
+   out.
+
 ## v3.5.1
 
 ### Fixed

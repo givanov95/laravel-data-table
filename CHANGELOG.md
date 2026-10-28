@@ -1,5 +1,12 @@
 # Changelog
 
+## v4.1.1
+
+### Fixed
+- A `TranslatableColumn` was empty when the translation model casts its locale (or key) to an
+  enum (`'locale' => Locale::class`): since 4.0.0 the translation is picked by its locale, and the
+  enum was compared with the column's string. Both are compared by value now (#46).
+
 ## v4.1.0
 
 ### Added

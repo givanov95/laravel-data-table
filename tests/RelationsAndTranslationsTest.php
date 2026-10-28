@@ -122,6 +122,18 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame(['Банан', 'Круша', 'Ябълка'], $table->getData()->pluck('title')->all());
     }
 
+    public function testShowsTheTranslationWhenTheLocaleIsCastToAnEnum(): void
+    {
+        RlShop::resolveRelationUsing('enumTranslations', fn (RlShop $shop) => $shop->morphMany(RlEnumTranslation::class, 'translatable'));
+        Config::set('data-table.translatable_relation', 'enumTranslations');
+
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title'))
+            ->process();
+
+        $this->assertSame(['Банан', 'Круша', 'Ябълка'], $table->getData()->pluck('title')->all());
+    }
+
     public function testLoadsTheTranslationsWithThePage(): void
     {
         Model::preventLazyLoading();
@@ -335,4 +347,21 @@ class RlText extends Model
     protected $guarded = [];
 
     public $timestamps = false;
+}
+
+enum RlLocale: string
+{
+    case En = 'en';
+    case Bg = 'bg';
+}
+
+class RlEnumTranslation extends Model
+{
+    protected $table = 'translations';
+
+    protected $guarded = [];
+
+    public $timestamps = false;
+
+    protected $casts = ['locale' => RlLocale::class];
 }

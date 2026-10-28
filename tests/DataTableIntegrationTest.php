@@ -96,8 +96,7 @@ final class DataTableIntegrationTest extends TestCase
             ->toArray();
 
         // Standard, framework-friendly top-level shape.
-        $this->assertSame(['data', 'meta', 'columns', 'state', 'params', 'key'], array_keys($result));
-        $this->assertSame('id', $result['key']);
+        $this->assertSame(['data', 'meta', 'columns', 'state', 'params'], array_keys($result));
 
         // meta uses Laravel-paginator naming (not the internal camelCase shape).
         $this->assertSame(1, $result['meta']['current_page']);

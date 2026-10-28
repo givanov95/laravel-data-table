@@ -1002,7 +1002,6 @@ class DataTable
      *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
      *       'state'   => [ search, sort => [column, direction] | null, trashed ],
      *       'params'  => [ per_page, global_filter, trashed, ordering, time_zone ],   // request keys
-     *       'key'     => 'id',   // the model's key: the field that identifies a row
      *     ]
      *
      * Call it explicitly (`->process()->toArray()`); the default serialization
@@ -1046,7 +1045,6 @@ class DataTable
                 'trashed' => $this->trashed,
             ],
             'params' => $this->requestKeys,
-            'key' => $this->keyName,
         ];
     }
 

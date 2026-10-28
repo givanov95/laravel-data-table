@@ -76,6 +76,8 @@ final class ExactMatchTest extends TestCase
 
             // MySQL turns `flag = 'abc'` into `flag = 0`: a row, but not an error.
             if (self::driver() === 'mysql' && $column === 'flag') {
+                $this->addToAssertionCount(1);
+
                 continue;
             }
 
@@ -166,6 +168,21 @@ final class ExactMatchTest extends TestCase
             'time'                 => ['time', '10:00:30', true],
             'varchar'              => ['varchar', 'anything', true],
             'jsonb'                => ['jsonb', '{}', null],
+            'int4 leading zeros'   => ['int4', '007', true],
+            'int4 negative bound'  => ['int4', '-2147483648', true],
+            'int4 spaces'          => ['int4', ' 5 ', true],
+            'float4 too large'     => ['float4', '1e50', false],
+            'float8 underflow'     => ['float8', '1e-400', false],
+            'float8 zero'          => ['float8', '0.0e5', true],
+            'uuid without hyphens' => ['uuid', '0199F3B46C1E7D2A9B8E1F2A3B4C5D6E', true],
+            'uuid in braces'       => ['uuid', '{0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6e}', true],
+            'uuid with a space'    => ['uuid', ' 0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6e', false],
+            'year 0'               => ['date', '0000-01-01', false],
+            'timestamp with T'     => ['timestamp', '2026-10-28T10:00:00', true],
+            'timestamp fraction'   => ['timestamptz', '2026-10-28 10:00:00.5+02:00', true],
+            'end of the day'       => ['time', '24:00', true],
+            'past the end'         => ['time', '24:01', false],
+            'a time in a DST gap'  => ['timestamp', '2026-03-29 03:30', true],
         ];
     }
 

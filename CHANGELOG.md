@@ -17,7 +17,7 @@
 - The bundled `DataTable` component identifies a row by the model's key: the payload carries
   `keyName` (`getKeyName()`), and the new `row-key` prop overrides it. `?id` in `rowClickLink` and
   `restoreUrl` was always filled from `id`, so a model keyed on `uid` posted to
-  `/…/undefined/restore`. `toArray()` names it too (`key`).
+  `/…/undefined/restore`.
 
 ## v4.0.0
 

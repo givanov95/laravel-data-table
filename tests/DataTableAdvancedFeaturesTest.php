@@ -214,6 +214,8 @@ final class DataTableAdvancedFeaturesTest extends TestCase
             'text'      => ['abc'],
             'a decimal' => ['1.5'],
             'too large' => ['99999999999999999999'],
+            // Past 32 bits: an `integer` column in PostgreSQL rejects it (22003).
+            'past 32 bits' => ['3000000000'],
         ];
     }
 
@@ -224,6 +226,13 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $table = (new DataTable(Post::query(), Request::create('/', 'GET', ['filter' => ['global' => $term]])))
             ->setColumn('id', '#', searchable: true, exactMatch: true)
             ->setColumn('status', 'Status', searchable: true)
+            ->process();
+
+        $this->assertSame([], $table->getData()->all());
+
+        // The only searchable column skipped: still no rows, not every row.
+        $table = (new DataTable(Post::query(), Request::create('/', 'GET', ['filter' => ['global' => $term]])))
+            ->setColumn('id', '#', searchable: true, exactMatch: true)
             ->process();
 
         $this->assertSame([], $table->getData()->all());
@@ -385,6 +394,13 @@ final class DataTableAdvancedFeaturesTest extends TestCase
             ->restore(3, fn ($q) => $q->where('author_id', 1)));
 
         $this->assertNotNull(Post::withTrashed()->find(3)->deleted_at);
+    }
+
+    public function testRestoreOfAnIdThatIsNotANumberIsNotFound(): void
+    {
+        Gate::policy(Post::class, PostPolicy::class);
+
+        $this->assertNotFound(fn () => (new DataTable(Post::query(), Request::create('/', 'POST')))->allowTrashed()->restore('abc'));
     }
 
     public function testRestoreFindsOnlyArchivedRecords(): void

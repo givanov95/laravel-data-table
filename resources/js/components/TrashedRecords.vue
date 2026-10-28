@@ -37,6 +37,12 @@ const handleShowTrashedRecords = async (input: RadioToggleInput) => {
             only: [props.propName],
             onSuccess: resolve,
             onError: reject,
+            // The server may not show the archive (not allowed for the table or
+            // the user): then `trashed` stays false, the watch above does not
+            // fire, and the toggle has to be put back by hand.
+            onFinish: () => {
+                archivedOptionSelected.value = props.trashed;
+            },
         });
     });
 };

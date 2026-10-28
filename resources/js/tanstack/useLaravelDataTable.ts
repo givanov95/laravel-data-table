@@ -5,7 +5,7 @@ import { computed, onScopeDispose, reactive, ref, toValue, watch } from "vue";
 import type { MaybeRefOrGetter } from "vue";
 
 import { getReloadDebounceMs } from "../config";
-import { replacePlaceholder } from "../utils";
+import { queryKeyOf as queryKey, replacePlaceholder } from "../utils";
 
 /**
  * The payload of `DataTable::process()->toArray()`: Laravel paginator naming
@@ -82,13 +82,6 @@ const DEFAULT_PARAMS: LaravelDataTableParams = {
     trashed: "filter.trashed",
     ordering: "ordering",
 };
-
-/** `filter.global` → `filter[global]`, the form it has in a query string. */
-const queryKey = (dotted: string): string =>
-    dotted
-        .split(".")
-        .map((part, i) => (i === 0 ? part : `[${part}]`))
-        .join("");
 
 /** TanStack makes a column id from `accessorKey` with dots as underscores. */
 const columnId = (key: string): string => key.split(".").join("_");

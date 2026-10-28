@@ -54,9 +54,10 @@
 - A price column is searched as `table.column`: ordering by a relation that has a column of the
   same name made the search fail with "ambiguous column" on every database.
 - An `exactMatch` column that is numeric by its cast (or an integer primary key) is left out of the
-  global search when the term is not a number it can hold (`abc`, `1.5` for an integer, a number
-  past the 64-bit range): PostgreSQL rejected `id = 'abc'` (22P02) with a 500. Filtered on alone
-  (`ColumnFilter`), such a value matches nothing.
+  global search when the term is not a number it can hold (`abc`, `1.5` for an integer, an integer
+  past 32 bits, since the cast does not tell `integer` from `bigint`): PostgreSQL rejected
+  `id = 'abc'` (22P02) with a 500. Filtered on alone (`ColumnFilter`), such a value matches nothing.
+  `restore()` with an id that cannot be the model's integer key is a 404.
 
 - Ordering by a `TranslatableColumn` joined on `{table}.id` and the model's class name: a model
   keyed on another column failed, and under a morph map the order was silently lost. The key,

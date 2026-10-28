@@ -83,4 +83,19 @@ describe("DataTable archive", () => {
 
         expect(reload.mock.calls.at(-1)?.[0]).toMatchObject({ data: { filter: { archived: true } }, only: ["dataTable"] });
     });
+
+    it("puts the toggle back when the server does not show the archive", async () => {
+        // The reload comes back with `trashed: false` (the table or the user may not see the archive).
+        reload.mockImplementation((options: { onSuccess: () => void; onFinish: () => void }) => {
+            options.onSuccess();
+            options.onFinish();
+        });
+        const wrapper = mountTable(payload({ trashed: false }), { showTrashed: true, globalSearch: true });
+
+        await wrapper.find("label[for='yes_filter[trashed]']").trigger("click");
+        await new Promise((resolve) => setTimeout(resolve));
+
+        expect((wrapper.find("input[id='yes_filter[trashed]']").element as HTMLInputElement).checked).toBe(false);
+        expect((wrapper.find("input[id='no_filter[trashed]']").element as HTMLInputElement).checked).toBe(true);
+    });
 });

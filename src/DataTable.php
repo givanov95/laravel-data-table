@@ -211,6 +211,11 @@ class DataTable
             });
         }
 
+        // `/posts/abc/restore` on an integer key is a 404, not a type error (22P02) from PostgreSQL.
+        if (! ColumnFilter::fitsColumn($model, $model->getKeyName(), $id)) {
+            throw (new ModelNotFoundException())->setModel($model::class, [$id]);
+        }
+
         /** @phpstan-ignore-next-line — onlyTrashed() is provided by the SoftDeletes scope. */
         $record = $builder->onlyTrashed()->findOrFail($id);
 
@@ -325,6 +330,11 @@ class DataTable
                 orderable: $orderable,
                 exactMatch: $exactMatch,
             );
+
+        // A RelationColumn passed here is checked as in setRelationColumn().
+        if ($column instanceof RelationColumn && $column->isOrderable()) {
+            $this->assertOrderableRelationPath($column);
+        }
 
         $this->columns->put($column->getDatabaseColumnName(), $column);
 

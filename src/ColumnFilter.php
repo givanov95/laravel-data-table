@@ -238,11 +238,11 @@ final class ColumnFilter
         }
 
         if ($exact && ! self::fitsColumn($builder->getModel(), $columnKey, $filterValue)) {
-            // `id = 'abc'` is an error on PostgreSQL (22P02), not "no match". In
-            // the global search the column is left out; a filter on it alone matches nothing.
-            if (! $useOrWhere) {
-                $builder->whereRaw('1 = 0');
-            }
+            // `id = 'abc'` is an error on PostgreSQL (22P02), not "no match", so
+            // the column matches nothing without asking the database. Added with
+            // the same boolean, so a search whose every column is skipped is not
+            // an empty group (which Laravel drops: every row would match).
+            $builder->whereRaw('1 = 0', [], $useOrWhere ? 'or' : 'and');
 
             return;
         }
@@ -252,10 +252,17 @@ final class ColumnFilter
 
     /**
      * Whether a value can be compared with `=` to a column that is numeric by
-     * its cast (or an integer key): a whole number in the 64-bit range for an
-     * integer, a number for a decimal. Other columns take any value.
+     * its cast (or an integer key): a whole number for an integer, a number
+     * for a decimal. Other columns take any value.
+     *
+     * An integer has to fit 32 bits: the cast does not say whether the column
+     * is `integer` or `bigint`, and a larger value is an error (22003) on an
+     * `integer` column in PostgreSQL. A bigint value above that is not found
+     * by an exact match.
+     *
+     * @internal
      */
-    private static function fitsColumn(Model $model, string $column, mixed $value): bool
+    public static function fitsColumn(Model $model, string $column, mixed $value): bool
     {
         $cast = $model->getCasts()[$column] ?? null;
 
@@ -266,7 +273,11 @@ final class ColumnFilter
         $cast = is_string($cast) ? strtolower(explode(':', $cast)[0]) : null;
 
         return match ($cast) {
-            'int', 'integer' => filter_var($value, FILTER_VALIDATE_INT) !== false,
+            'int', 'integer' => filter_var(
+                $value,
+                FILTER_VALIDATE_INT,
+                ['options' => ['min_range' => -2147483648, 'max_range' => 2147483647]],
+            ) !== false,
             'float', 'double', 'real', 'decimal' => is_numeric($value) && is_finite((float) $value),
             default => true,
         };

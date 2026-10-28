@@ -174,6 +174,14 @@ final class RelationsAndTranslationsTest extends TestCase
             ->setRelationColumn(new RelationColumn('items.name', 'Items', orderable: true));
     }
 
+    public function testAnOrderableRelationColumnPassedToSetColumnIsCheckedToo(): void
+    {
+        $this->expectException(UnsupportedRelationException::class);
+
+        (new DataTable(RlShop::query(), $this->request([])))
+            ->setColumn(new RelationColumn('items.name', 'Items', orderable: true));
+    }
+
     public function testAnOrderableOneOfManyRelationIsRejectedWhenDeclared(): void
     {
         $this->expectException(UnsupportedRelationException::class);

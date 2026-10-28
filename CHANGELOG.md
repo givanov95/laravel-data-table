@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `TranslatableColumn` takes `fallbackLocales`: a row shows the first language with a text that is
+  not empty, and search (global and by column) looks at every language of the column. A language
+  the column does not list, or its enum cast does not know, is skipped without an error (#50).
+
+### Changed
+- Ordering by a `TranslatableColumn` puts the rows without a text (none, or an empty one) last in
+  both directions on every driver. Before, they came first in an ascending sort on MySQL and
+  SQLite and last on PostgreSQL (#50).
+
 ## v4.2.1
 
 ### Fixed

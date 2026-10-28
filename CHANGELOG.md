@@ -39,6 +39,14 @@
   there instead of a hard-coded `filter[trashed]`, and whether the rows are archived from the
   server instead of the URL.
 
+### Fixed
+- A price column is searched as `table.column`: ordering by a relation that has a column of the
+  same name made the search fail with "ambiguous column" on every database.
+- An `exactMatch` column that is numeric by its cast (or an integer primary key) is left out of the
+  global search when the term is not a number it can hold (`abc`, `1.5` for an integer, a number
+  past the 64-bit range): PostgreSQL rejected `id = 'abc'` (22P02) with a 500. Filtered on alone
+  (`ColumnFilter`), such a value matches nothing.
+
 ### Migration from 3.x
 1. Call `->allowTrashed()` (optionally with an ability) on every table that has an archive toggle.
 2. Add a POST route for restoring that returns `$table->restore($id, $scope)` — build the table

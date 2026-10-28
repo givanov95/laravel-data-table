@@ -266,6 +266,10 @@ expression. It is supported on:
 | PostgreSQL           | `pgsql`            | `TO_CHAR(column, …)`        |
 | SQLite               | `sqlite`           | `strftime(…, column)`       |
 
+An `exactMatch` column that is numeric by its cast (`int`, `integer`, `decimal:2`,
+`float`…, or an integer primary key) is skipped by the global search when the
+term is not a number it can hold, so `id = 'abc'` never reaches PostgreSQL.
+
 On any other driver (e.g. SQL Server) filtering a date column throws
 `Givanov95\DataTable\Exceptions\UnsupportedDriverException`. The other filters
 (text, enum, price) are plain Eloquent `where` clauses and do not depend on it.

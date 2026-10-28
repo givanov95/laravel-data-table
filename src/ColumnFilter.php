@@ -10,6 +10,7 @@ use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
 use Givanov95\DataTable\Support\DateSqlExpression;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 
 final class ColumnFilter
 {
@@ -44,7 +45,7 @@ final class ColumnFilter
         } elseif ($enumColumns->has($columnKey)) {
             $this->applyEnumFilter($builder, $column, $columnKey, $filterValue, $useOrWhere, $table);
         } elseif ($priceColumns->has($columnKey)) {
-            $this->applyPriceFilter($builder, $columnKey, $filterValue, $exact, $useOrWhere);
+            $this->applyPriceFilter($builder, $columnKey, $filterValue, $exact, $useOrWhere, $table);
         } else {
             $this->applyDefaultFilter($builder, $column, $columnKey, $filterValue, $exact, $useOrWhere, $table);
         }
@@ -190,6 +191,7 @@ final class ColumnFilter
         mixed $filterValue,
         bool $exact,
         bool $useOrWhere,
+        string $table,
     ): void {
         // Digits only, taken from the raw input: a `%` or `_` typed by the user must not reach the pattern.
         $price = preg_replace('/\D/', '', (string) $filterValue);
@@ -198,8 +200,17 @@ final class ColumnFilter
             return;
         }
 
-        $method = $useOrWhere ? 'orWhere' : 'where';
-        $builder->{$method}($columnKey, $exact ? '=' : 'LIKE', $exact ? $price : "%{$price}%");
+        // Qualified: a join of a relation ordering can bring a column of the same name.
+        $column = "{$table}.{$columnKey}";
+        $boolean = $useOrWhere ? 'or' : 'and';
+
+        if ($exact) {
+            $builder->where($column, '=', $price, $boolean);
+
+            return;
+        }
+
+        LikeExpression::apply($builder, $column, $price, $boolean);
     }
 
     private function applyDefaultFilter(
@@ -214,13 +225,51 @@ final class ColumnFilter
         if ($column instanceof RelationColumn) {
             $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
             $builder->{$method}($column->relationString, function ($query) use ($column, $filterValue, $exact) {
+                if ($exact && ! self::fitsColumn($query->getModel(), $column->relationColumn, $filterValue)) {
+                    $query->whereRaw('1 = 0');
+
+                    return;
+                }
+
                 $this->whereColumnMatches($query, $column->relationColumn, $filterValue, $exact);
             });
 
             return;
         }
 
+        if ($exact && ! self::fitsColumn($builder->getModel(), $columnKey, $filterValue)) {
+            // `id = 'abc'` is an error on PostgreSQL (22P02), not "no match". In
+            // the global search the column is left out; a filter on it alone matches nothing.
+            if (! $useOrWhere) {
+                $builder->whereRaw('1 = 0');
+            }
+
+            return;
+        }
+
         $this->whereColumnMatches($builder, "{$table}.{$columnKey}", $filterValue, $exact, $useOrWhere ? 'or' : 'and');
+    }
+
+    /**
+     * Whether a value can be compared with `=` to a column that is numeric by
+     * its cast (or an integer key): a whole number in the 64-bit range for an
+     * integer, a number for a decimal. Other columns take any value.
+     */
+    private static function fitsColumn(Model $model, string $column, mixed $value): bool
+    {
+        $cast = $model->getCasts()[$column] ?? null;
+
+        if ($cast === null && $column === $model->getKeyName() && in_array($model->getKeyType(), ['int', 'integer'], true)) {
+            $cast = 'int';
+        }
+
+        $cast = is_string($cast) ? strtolower(explode(':', $cast)[0]) : null;
+
+        return match ($cast) {
+            'int', 'integer' => filter_var($value, FILTER_VALIDATE_INT) !== false,
+            'float', 'double', 'real', 'decimal' => is_numeric($value) && is_finite((float) $value),
+            default => true,
+        };
     }
 
     private function whereColumnMatches(

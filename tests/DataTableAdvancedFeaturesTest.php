@@ -19,6 +19,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class DataTableAdvancedFeaturesTest extends TestCase
 {
@@ -186,6 +187,62 @@ final class DataTableAdvancedFeaturesTest extends TestCase
 
         $this->assertCount(1, $table->getData());
         $this->assertEqualsWithDelta(19.99, (float) $table->getData()->first()->price, 0.01);
+    }
+
+    public function testPriceSearchIsQualifiedWhenARelationOrderingJoinsAColumnOfTheSameName(): void
+    {
+        Schema::table('authors', fn (Blueprint $table) => $table->decimal('price', 8, 2)->default(0));
+
+        $request = Request::create('/', 'GET', [
+            'filter'   => ['global' => '$19'],
+            'ordering' => ['key' => 'author.name', 'direction' => 'asc'],
+        ]);
+
+        $table = (new DataTable(Post::query(), $request))
+            ->setColumn('price', 'Price', searchable: true)
+            ->setRelationColumn(new RelationColumn('author.name', 'Author', orderable: true))
+            ->setPriceColumn('price')
+            ->process();
+
+        $this->assertSame([2], $table->getData()->pluck('id')->all());
+    }
+
+    /** @return array<string, array{string}> */
+    public static function valuesThatAreNotAnId(): array
+    {
+        return [
+            'text'      => ['abc'],
+            'a decimal' => ['1.5'],
+            'too large' => ['99999999999999999999'],
+        ];
+    }
+
+    #[DataProvider('valuesThatAreNotAnId')]
+    public function testAnExactMatchOnAnIntegerColumnSkipsAValueThatIsNotOne(string $term): void
+    {
+        // On PostgreSQL, `id = 'abc'` is an error (22P02), `id = '9999…'` too (22003).
+        $table = (new DataTable(Post::query(), Request::create('/', 'GET', ['filter' => ['global' => $term]])))
+            ->setColumn('id', '#', searchable: true, exactMatch: true)
+            ->setColumn('status', 'Status', searchable: true)
+            ->process();
+
+        $this->assertSame([], $table->getData()->all());
+
+        // The other searchable columns still count.
+        $table = (new DataTable(Post::query(), Request::create('/', 'GET', ['filter' => ['global' => '2']])))
+            ->setColumn('id', '#', searchable: true, exactMatch: true)
+            ->process();
+
+        $this->assertSame([2], $table->getData()->pluck('id')->all());
+    }
+
+    public function testAnExactFilterOnAnIntegerColumnWithAValueThatIsNotOneMatchesNothing(): void
+    {
+        $table = (new DataTable(Post::query(), Request::create('/')))->setColumn('id', '#', exactMatch: true);
+
+        $builder = (new \Givanov95\DataTable\ColumnFilter($table))->apply(Post::query(), 'id', 'abc')->getBuilder();
+
+        $this->assertSame(0, $builder->count());
     }
 
     public function testTrashedFilterShowsOnlyDeletedRecords(): void

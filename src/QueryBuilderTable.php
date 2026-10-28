@@ -96,7 +96,7 @@ class QueryBuilderTable
                     throw new InvalidArgumentException("Unknown filter '{$filter}' for the column '{$column['key']}': use text, exact, select or date.");
                 }
 
-                if (in_array($column['key'], [...DataTableConfig::reservedFilterNames(), 'global', 'timeZone', 'trashed'], true)) {
+                if (in_array($column['key'], $this->reservedFilterNames(), true)) {
                     throw new InvalidArgumentException("The column '{$column['key']}' cannot be filterable: it is another request key of the table.");
                 }
 
@@ -259,6 +259,23 @@ class QueryBuilderTable
     }
 
     /**
+     * The names a filterable column cannot have: those of DataTable, plus
+     * `global`, `timeZone` and `trashed` while the column filters are Spatie's
+     * parameter, where tolerableFilters() registers those names already.
+     *
+     * @return list<string>
+     */
+    private function reservedFilterNames(): array
+    {
+        $spatie = DataTableConfig::getColumnFiltersKey() === (string) Config::get('query-builder.parameters.filter', 'filter');
+
+        return array_values(array_unique([
+            ...DataTableConfig::reservedFilterNames(),
+            ...($spatie ? ['global', 'timeZone', 'trashed'] : []),
+        ]));
+    }
+
+    /**
      * Each filter of a filterable column, as its own `where`; the applied
      * values, as `state.filters`.
      *
@@ -283,9 +300,11 @@ class QueryBuilderTable
             $value = $requested[$key];
 
             if ($kind === 'text') {
-                if (is_string($value) && trim($value) !== '') {
-                    $applied[$key] = $value;
-                    LikeExpression::apply($query, $key, $value);
+                $text = is_string($value) ? trim($value) : '';
+
+                if ($text !== '') {
+                    $applied[$key] = $text;
+                    LikeExpression::apply($query, $key, $text);
                 }
 
                 continue;
@@ -310,8 +329,19 @@ class QueryBuilderTable
 
             $values = $kind === 'select'
                 ? FilterClauses::offered($values, $column['filter']['options'] ?? [])
-                // Only values the column can hold reach the database (PostgreSQL rejects `id = 'abc'`).
-                : array_values(array_filter($values, fn (string $v): bool => ColumnFilter::acceptance($connection, $model, $key, $v) === true));
+                // Only values the column can hold reach the database (PostgreSQL rejects `id = 'abc'`);
+                // a type not known here (a native enum) takes them as they are.
+                : array_values(array_filter($values, fn (string $v): bool => ColumnFilter::acceptance($connection, $model, $key, $v) !== false));
+
+            if ($values === []) {
+                // Nothing the column can hold: no row has it. None offered (a stale
+                // link) is no filter, rather than an empty table that says nothing.
+                if ($kind === 'exact') {
+                    $query->whereRaw('1 = 0');
+                }
+
+                continue;
+            }
 
             $applied[$key] = array_map('strval', $values);
             FilterClauses::whereIn($query, $key, $values);

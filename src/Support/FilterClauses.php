@@ -88,8 +88,10 @@ final class FilterClauses
 
     /**
      * The options a select offers, as `[{value, label}]`. Takes a list of
-     * `['value' => …, 'label' => …]`, a `value => label` map or a closure that
-     * returns either (it runs once, when the table is built).
+     * `['value' => …, 'label' => …]`, a `value => label` map, a plain list of
+     * values (their own labels) or a closure that returns any of these (it
+     * runs once, when the table is built). A map keyed 0, 1, 2… reads as a
+     * plain list: give such ids as `['value' => …, 'label' => …]`.
      *
      * @param array<array-key, mixed>|Closure(): array<array-key, mixed> $options
      * @return list<array{value: string|int, label: string}>
@@ -97,6 +99,8 @@ final class FilterClauses
     public static function options(array|Closure $options): array
     {
         $options = $options instanceof Closure ? (array) $options() : $options;
+        // A plain list of values (`['paid', 'open']`) is its own labels, not 0, 1, 2.
+        $plain = array_is_list($options) && array_filter($options, 'is_scalar') === $options;
         $list = [];
 
         foreach ($options as $key => $option) {
@@ -107,7 +111,7 @@ final class FilterClauses
             }
 
             if (is_scalar($option)) {
-                $list[] = ['value' => self::optionValue($key), 'label' => (string) $option];
+                $list[] = ['value' => self::optionValue($plain ? $option : $key), 'label' => (string) $option];
             }
         }
 
@@ -211,7 +215,9 @@ final class FilterClauses
             return null;
         }
 
-        return (int) $m[1] >= 1 && checkdate((int) $m[2], (int) $m[3], (int) $m[1]) ? $value : null;
+        // From year 1000: a date input passes through 0002, 0020… while a year is typed, and
+        // year 1 moved to the server's zone can fall into year 0, which PostgreSQL rejects.
+        return (int) $m[1] >= 1000 && checkdate((int) $m[2], (int) $m[3], (int) $m[1]) ? $value : null;
     }
 
     private static function optionValue(mixed $value): string|int

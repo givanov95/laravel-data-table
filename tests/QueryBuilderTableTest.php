@@ -479,6 +479,19 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(['author' => ['Alice']], $payload['state']['filters']);
     }
 
+    public function testAStaleSelectValueIsNoFilterAndATextIsTrimmed(): void
+    {
+        $payload = $this->filtered(['author' => ['Carol']]);
+
+        $this->assertSame(3, $payload['meta']['total']);
+        $this->assertSame([], $payload['state']['filters']);
+
+        $payload = $this->filtered(['title' => ' red ']);
+
+        $this->assertSame([1, 3], array_column($payload['data'], 'id'));
+        $this->assertSame(['title' => 'red'], $payload['state']['filters']);
+    }
+
     public function testADateFilterTakesCalendarDays(): void
     {
         QbtArticle::query()->whereKey(2)->update(['created_at' => '2026-10-28 12:00:00']);

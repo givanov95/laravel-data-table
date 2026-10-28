@@ -98,6 +98,7 @@ export interface UseLaravelDataTableOptions {
 }
 
 const DEFAULT_PROP_NAME = "dataTable";
+const DATE_DEBOUNCE_MS = 500;
 const DEFAULT_PER_PAGE_OPTIONS = [10, 20, 50, 100];
 const DEFAULT_PARAMS: LaravelDataTableParams = {
     per_page: "perPage",
@@ -273,7 +274,19 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
     function searchChanges(term: string): Record<string, QueryValue> {
         const value = term.trim() !== "" ? term : undefined;
 
-        return { [keys.value.global]: value, [keys.value.timeZone]: value === undefined ? undefined : timeZone() };
+        return { [keys.value.global]: value, [keys.value.timeZone]: zoneFor(value !== undefined) };
+    }
+
+    /**
+     * The browser's zone, while the search or a date filter needs it (the
+     * server reads both in the user's days); nothing otherwise.
+     */
+    function zoneFor(searching: boolean): string | undefined {
+        const dateFilter = filterColumns.value.some(
+            (c) => c.filter.type === "date" && !isEmptyFilter(filters.value[c.key]),
+        );
+
+        return searching || dateFilter ? timeZone() : undefined;
     }
 
     // ----- Sorting ---------------------------------------------------------------
@@ -446,6 +459,7 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
     function sendFilters(): void {
         cancelFilters();
 
+        const searching = globalFilter.value.trim() !== "";
         const changes: Record<string, QueryValue> = { page: 1 };
 
         for (const column of filterColumns.value) {
@@ -453,6 +467,8 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
 
             changes[filterQueryKey(column.key)] = isEmptyFilter(value) ? undefined : (value as QueryValue);
         }
+
+        changes[keys.value.timeZone] = zoneFor(searching);
 
         const seq = ++filterSeq;
         filtersInFlight = true;
@@ -489,6 +505,13 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
 
         if (type === "text") {
             filterTimer = setTimeout(sendFilters, searchDebounceMs);
+
+            return;
+        }
+
+        // Typing a year into a date field passes through 0002, 0020, 0202…: wait for the last.
+        if (type === "date") {
+            filterTimer = setTimeout(sendFilters, DATE_DEBOUNCE_MS);
 
             return;
         }

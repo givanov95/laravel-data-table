@@ -711,6 +711,13 @@ class DataTable
         }
 
         $values = FilterClauses::offered($requested, $this->filterOptionsOf($key));
+
+        // None offered (a stale link, a renamed case): no filter, rather than an
+        // empty table with nothing on screen saying why.
+        if ($values === []) {
+            return;
+        }
+
         $this->appliedFilters[$key] = array_map('strval', $values);
 
         $this->getBuilder()->where(function (Builder $query) use ($column, $values) {
@@ -740,7 +747,10 @@ class DataTable
 
     private function applyTextFilter(string $key, Column $column, string $text, ?string $timeZone): void
     {
-        if (trim($text) === '') {
+        // Like the search: `Smith ` is `Smith`.
+        $text = trim($text);
+
+        if ($text === '') {
             return;
         }
 

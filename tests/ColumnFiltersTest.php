@@ -98,14 +98,20 @@ final class ColumnFiltersTest extends TestCase
         $this->assertSame([2], $this->ids($table));
         $this->assertSame(['approved'], $table->toArray()['state']['filters']['status']);
 
-        // Nothing offered: nothing matches (not every row).
-        $this->assertSame([], $this->ids($this->table(['filter' => ['status' => 'nope']])->process()));
+        // Nothing offered (a stale link): no filter, not an empty table with nothing saying why.
+        $table = $this->table(['filter' => ['status' => 'nope']])->process();
+        $this->assertSame([1, 2, 3], $this->ids($table));
+        $this->assertSame([], $table->toArray()['state']['filters']);
     }
 
     public function testASelectWithTheAppsOptions(): void
     {
         $this->assertSame([3], $this->ids($this->table(['filter' => ['author_id' => '2']])->process()));
-        $this->assertSame([], $this->ids($this->table(['filter' => ['author_id' => '99']])->process()));
+        $this->assertSame([1, 2, 3], $this->ids($this->table(['filter' => ['author_id' => '99']])->process()));
+
+        // A plain list of values is its own labels.
+        $table = $this->table([])->setFilterOptions('status', ['pending', 'approved'])->process();
+        $this->assertSame([['value' => 'pending', 'label' => 'pending'], ['value' => 'approved', 'label' => 'approved']], array_column($table->toArray()['columns'], 'filter', 'key')['status']['options']);
     }
 
     public function testADateRangeIsTheUsersDays(): void
@@ -134,6 +140,22 @@ final class ColumnFiltersTest extends TestCase
     {
         $this->assertSame([3], $this->ids($this->table(['filter' => ['name' => 'bo']])->process()));
         $this->assertSame([1, 2], $this->ids($this->table(['filter' => ['title' => 'world']])->process()));
+    }
+
+    public function testADateBeforeYear1000IsIgnored(): void
+    {
+        // A date field passes through 0002-10-28 while the year is typed.
+        $table = $this->table(['filter' => ['published_at' => ['from' => '0002-10-28']], 'timeZone' => 'Asia/Tokyo'])->process();
+
+        $this->assertSame([1, 2, 3], $this->ids($table));
+    }
+
+    public function testATextFilterIsTrimmed(): void
+    {
+        $table = $this->table(['filter' => ['title' => ' world ']])->process();
+
+        $this->assertSame([1, 2], $this->ids($table));
+        $this->assertSame(['title' => 'world'], $table->toArray()['state']['filters']);
     }
 
     public function testATextFilterOnAPriceTakesTheDigits(): void

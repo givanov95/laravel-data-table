@@ -253,27 +253,37 @@ describe("useLaravelDataTable", () => {
             expect(table.filterColumns.map((c) => c.key)).toEqual(["status", "created_at", "author.name"]);
         });
 
-        it("sends a select or a date range at once, on page 1, next to the search", () => {
+        it("sends a select at once and a date range a moment later, on page 1, next to the search", () => {
+            const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
             page.url = "/posts?page=3&filter%5Bglobal%5D=al&filter%5BtimeZone%5D=UTC";
-            const { table } = setup(filtered());
+            const { table } = setup(filtered({ search: "al" }));
 
             table.setColumnFilter("status", ["paid", "open"]);
             expect(lastQuery()).toEqual({
                 page: "1",
                 "filter[global]": "al",
-                "filter[timeZone]": "UTC",
+                "filter[timeZone]": zone,
                 "filter[status][0]": "paid",
                 "filter[status][1]": "open",
             });
 
+            // Typing a year passes through 0002, 0020…: only the last is sent.
             page.url = "/posts?filter%5Bstatus%5D%5B0%5D=paid&filter%5Bstatus%5D%5B1%5D=open";
+            get.mockReset();
+            table.setColumnFilter("created_at", { from: "0002-10-01" });
             table.setColumnFilter("created_at", { from: "2026-10-01", to: "2026-10-31" });
+            expect(get).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(500);
+            expect(get).toHaveBeenCalledOnce();
             expect(lastQuery()).toEqual({
                 page: "1",
                 "filter[status][0]": "paid",
                 "filter[status][1]": "open",
                 "filter[created_at][from]": "2026-10-01",
                 "filter[created_at][to]": "2026-10-31",
+                // The server reads the days in the user's zone, with or without a search.
+                "filter[timeZone]": zone,
             });
         });
 
@@ -293,9 +303,12 @@ describe("useLaravelDataTable", () => {
 
             expect(table.hasColumnFilters).toBe(true);
 
-            table.setColumnFilter("status", []);
-            expect(lastQuery()).toEqual({ page: "1", "filter[created_at][from]": "2026-10-01", "filter[global]": "al" });
+            const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+            table.setColumnFilter("status", []);
+            expect(lastQuery()).toEqual({ page: "1", "filter[created_at][from]": "2026-10-01", "filter[global]": "al", "filter[timeZone]": zone });
+
+            // No date filter and no search: no zone either.
             table.clearColumnFilters();
             expect(lastQuery()).toEqual({ page: "1", "filter[global]": "al" });
             expect(table.hasColumnFilters).toBe(false);

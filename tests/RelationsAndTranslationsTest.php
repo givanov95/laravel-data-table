@@ -167,6 +167,142 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame([11], $this->uids($table));
     }
 
+    /**
+     * Shops for the fallback languages, next to 10–12 (which have both `en` and `bg`):
+     * 13 only `en`; 14 an empty `en` and a `bg`; 15 nothing; 16 only `xx`, a language
+     * neither the columns nor the enum know.
+     */
+    private function seedFallbackShops(): void
+    {
+        foreach ([[13, ['en' => 'Cherry']], [14, ['en' => '  ', 'bg' => 'Date']], [15, []], [16, ['xx' => 'Ghost']]] as [$uid, $texts]) {
+            $shop = RlShop::create(['uid' => $uid, 'name' => "Shop {$uid}"]);
+
+            foreach ($texts as $locale => $text) {
+                $shop->translations()->create(['locale' => $locale, 'key' => 'title', 'text' => $text]);
+            }
+        }
+    }
+
+    /** @return array<int, string|null> uid => the title the row shows */
+    private function titles(DataTable $table): array
+    {
+        return $table->getData()->mapWithKeys(fn ($shop) => [(int) $shop->uid => $shop->title])->sortKeys()->all();
+    }
+
+    public function testShowsTheFirstLanguageWithAText(): void
+    {
+        $this->seedFallbackShops();
+
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title', fallbackLocales: ['en']))
+            ->process();
+
+        // 13: no bg; 14: bg has the text; 15 and 16: nothing in bg or en (xx is not listed).
+        $this->assertSame(
+            [10 => 'Ябълка', 11 => 'Круша', 12 => 'Банан', 13 => 'Cherry', 14 => 'Date', 15 => null, 16 => null],
+            $this->titles($table),
+        );
+    }
+
+    public function testAnEmptyTextFallsBackToTheNextLanguage(): void
+    {
+        $this->seedFallbackShops();
+
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', fallbackLocales: ['bg']))
+            ->process();
+
+        $this->assertSame('Date', $this->titles($table)[14]);
+    }
+
+    public function testWithoutFallbacksAnEmptyTextStaysAsItIs(): void
+    {
+        $this->seedFallbackShops();
+
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title'))
+            ->process();
+
+        $this->assertSame('  ', $this->titles($table)[14]);
+    }
+
+    public function testFallbackLanguagesTakeEnumsAndSkipALanguageTheCastDoesNotKnow(): void
+    {
+        $this->seedFallbackShops();
+        Config::set('data-table.translatable_relation', 'castTranslations');
+
+        // Shop 16 stores `xx`, which RlLocale cannot cast: it is skipped, not thrown on.
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn(RlLocale::Bg, 'title', 'Title', fallbackLocales: [RlLocale::En, RlLocale::Bg]))
+            ->process();
+
+        $this->assertSame(['bg', 'en'], (new TranslatableColumn(RlLocale::Bg, 'title', fallbackLocales: [RlLocale::En, RlLocale::Bg]))->getLocales());
+        $this->assertSame([13 => 'Cherry', 14 => 'Date', 15 => null, 16 => null], array_slice($this->titles($table), 3, null, true));
+    }
+
+    public function testLoadsTheFallbackLanguagesWithThePage(): void
+    {
+        $this->seedFallbackShops();
+        Model::preventLazyLoading();
+
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title', fallbackLocales: ['en']))
+            ->process();
+
+        $this->assertSame('Cherry', $this->titles($table)[13]);
+        // bg and en of the column, not the xx of shop 16.
+        $this->assertCount(0, $table->getData()->firstWhere('uid', 16)->translations);
+        $this->assertCount(2, $table->getData()->firstWhere('uid', 10)->translations);
+    }
+
+    public function testSearchesEveryLanguageOfTheColumn(): void
+    {
+        $this->seedFallbackShops();
+
+        $global = (new DataTable(RlShop::query(), $this->request(['filter' => ['global' => 'Cherr']])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title', searchable: true, fallbackLocales: ['en']))
+            ->process();
+
+        $byColumn = (new DataTable(RlShop::query(), $this->request(['filter' => ['title' => 'Cherr']])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title', filterable: true, fallbackLocales: ['en']))
+            ->process();
+
+        // A language the column does not list is not searched.
+        $ghost = (new DataTable(RlShop::query(), $this->request(['filter' => ['global' => 'Ghost']])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title', searchable: true, fallbackLocales: ['en']))
+            ->process();
+
+        $this->assertSame([13], $this->uids($global));
+        $this->assertSame([13], $this->uids($byColumn));
+        $this->assertSame([], $this->uids($ghost));
+    }
+
+    public function testOrdersByTheShownTextWithTheRowsWithoutOneLastInBothDirections(): void
+    {
+        $this->seedFallbackShops();
+
+        $order = fn (string $direction) => $this->uids((new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'title', 'direction' => $direction]])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true, fallbackLocales: ['bg']))
+            ->process());
+
+        // Apple 10, Banana 12, Cherry 13, Date 14 (bg, en is empty), Pear 11; then 15 and 16 by key.
+        $this->assertSame([10, 12, 13, 14, 11, 15, 16], $order('asc'));
+        $this->assertSame([11, 14, 13, 12, 10, 16, 15], $order('desc'));
+    }
+
+    public function testWithoutFallbacksRowsWithoutATextAreLastInBothDirections(): void
+    {
+        $this->seedFallbackShops();
+
+        $order = fn (string $direction) => $this->uids((new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'title', 'direction' => $direction]])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true))
+            ->process());
+
+        // 14's en is empty: it counts as no text.
+        $this->assertSame([10, 12, 13, 11, 14, 15, 16], $order('asc'));
+        $this->assertSame([11, 13, 12, 10, 16, 15, 14], $order('desc'));
+    }
+
     public function testOrdersByAHasOneRelation(): void
     {
         $table = (new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'profile.city', 'direction' => 'asc']])))

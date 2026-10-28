@@ -5,6 +5,7 @@ import { computed, onScopeDispose, reactive, ref, toValue, watch } from "vue";
 import type { MaybeRefOrGetter } from "vue";
 
 import { getReloadDebounceMs } from "../config";
+import { queryKeyOf as queryKey, replacePlaceholder } from "../utils";
 
 /**
  * The payload of `DataTable::process()->toArray()`: Laravel paginator naming
@@ -38,7 +39,8 @@ export interface LaravelDataTableParams {
     global_filter: string;
     trashed: string;
     ordering: string;
-    restore_id: string;
+    /** Sent by v4+; next to `global_filter` (`filter.timeZone`) otherwise. */
+    time_zone?: string;
 }
 
 export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
@@ -64,6 +66,12 @@ export interface UseLaravelDataTableOptions {
     searchDebounceMs?: number;
     /** Offered by the per-page select (the applied size is always added). */
     perPageOptions?: number[];
+    /**
+     * Where `onRestore(id)` POSTs: a URL with an `?id` placeholder
+     * (`/posts/?id/restore`) or a function of the id. The route calls
+     * `DataTable::restore($id)`. Without it, `onRestore` does nothing.
+     */
+    restoreUrl?: string | ((id: number | string) => string);
 }
 
 const DEFAULT_PROP_NAME = "dataTable";
@@ -73,15 +81,7 @@ const DEFAULT_PARAMS: LaravelDataTableParams = {
     global_filter: "filter.global",
     trashed: "filter.trashed",
     ordering: "ordering",
-    restore_id: "restore_id",
 };
-
-/** `filter.global` → `filter[global]`, the form it has in a query string. */
-const queryKey = (dotted: string): string =>
-    dotted
-        .split(".")
-        .map((part, i) => (i === 0 ? part : `[${part}]`))
-        .join("");
 
 /** TanStack makes a column id from `accessorKey` with dots as underscores. */
 const columnId = (key: string): string => key.split(".").join("_");
@@ -132,11 +132,10 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         return {
             perPage: queryKey(params.value.per_page),
             global,
-            // Sent next to the search term (date columns are matched in it).
-            timeZone: queryKey([...parent, "timeZone"].join(".")),
+            // Sent with the search term: dates typed in it are read in the user's zone.
+            timeZone: queryKey(params.value.time_zone ?? [...parent, "timeZone"].join(".")),
             trashed: queryKey(params.value.trashed),
             ordering: queryKey(params.value.ordering),
-            restoreId: queryKey(params.value.restore_id),
         };
     });
 
@@ -351,18 +350,23 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         visit({ [keys.value.trashed]: value ? "true" : undefined, page: 1 });
     }
 
-    function onRestore(id: number): void {
-        visit(
-            { [keys.value.restoreId]: id },
-            {
-                onSuccess: () => {
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete(keys.value.restoreId);
+    /**
+     * Restore an archived row with a POST to `restoreUrl` (a GET that changes
+     * data could be triggered from another site). The route redirects back,
+     * so the table and the page's flash messages come back fresh.
+     */
+    function onRestore(id: number | string): void {
+        const restoreUrl = options.restoreUrl;
 
-                    router.replace({ url: url.pathname + url.search, preserveState: true, preserveScroll: true });
-                },
-            },
-        );
+        if (restoreUrl === undefined) {
+            console.warn("useLaravelDataTable: pass the `restoreUrl` option to restore rows.");
+
+            return;
+        }
+
+        const url = typeof restoreUrl === "function" ? restoreUrl(id) : replacePlaceholder(restoreUrl, id);
+
+        router.post(url, {}, { preserveState: true, preserveScroll: true });
     }
 
     // ----- Pages -------------------------------------------------------------------

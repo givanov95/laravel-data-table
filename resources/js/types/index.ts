@@ -29,10 +29,23 @@ export interface Paginator {
     pagesRange: number;
 }
 
+/** The request keys of the server's config/data-table.php (dotted: `filter.trashed`). */
+export interface RequestKeys {
+    per_page: string;
+    global_filter: string;
+    trashed: string;
+    ordering: string;
+    [key: string]: string;
+}
+
 export interface DataTable<TData = Record<string, unknown>> {
     data: TData[];
     paginator: Paginator;
     columns: ColumnMap;
+    /** Sent by v4+. */
+    requestKeys?: RequestKeys;
+    /** Whether the rows are the archive, as the server applied it (v4+). */
+    trashed?: boolean;
 }
 
 export interface FilterValues extends Record<string, unknown> {

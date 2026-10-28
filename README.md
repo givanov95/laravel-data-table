@@ -65,14 +65,16 @@ createApp(App)
 
 ```php
 return [
-    'translatable_table'  => 'translations',
-    'translatable_column' => 'key',
+    'translatable_relation'      => 'translations',
+    'translatable_column'        => 'key',
+    'translatable_locale_column' => 'locale',
+    'translatable_text_column'   => 'text',
 
     'global_filter' => 'filter.global',
     'per_page'      => 'perPage',
     'trashed'       => 'filter.trashed',
-    'restore_id'    => 'restore_id',
     'ordering'      => 'ordering',
+    'time_zone'     => null,   // null: next to global_filter (filter.timeZone)
 
     'default_per_page' => 15,
     'max_per_page'     => 100,
@@ -80,9 +82,9 @@ return [
 ```
 
 These keys map directly to the HTTP query parameters the frontend sends, and
-both `DataTable` and `QueryBuilderTable` read them (`restore_id` is only used
-by `DataTable`). `ordering` is the parameter that carries `ordering[key]` and
-`ordering[direction]`. The Vue components bundled with the package send the
+both `DataTable` and `QueryBuilderTable` read them (`trashed` only when the
+table calls `allowTrashed()`). `ordering` is the parameter that carries
+`ordering[key]` and `ordering[direction]`. The Vue components bundled with the package send the
 defaults above, so changing a key means pairing it with your own frontend.
 
 The page size read from the request is bounded: anything above `max_per_page`
@@ -184,10 +186,15 @@ keeps tolerating `filter[global]`, `filter[timeZone]` and (with `allowTrashed()`
 `filter[trashed]`. A search key outside that parameter (`'global_filter' => 'q'`)
 works too.
 
+`allowTrashed(ability: 'viewArchive')` shows the soft-deleted rows only to users
+`Gate::allows('viewArchive', User::class)`; for the rest, and for a model without
+`SoftDeletes`, the `trashed` toggle is accepted and ignored (no 400, no 500).
+
 The page size is bounded by `data-table.max_per_page` (see
 [Configuration](#configuration)); call `->maxPerPage(50)` to override it for a
-single table (it throws `InvalidArgumentException` below 1), and
-`->defaultPerPage(25)` to change the fallback.
+single table (it throws `InvalidArgumentException` below 1). Without
+`?perPage` the page size is `data-table.default_per_page`, like in `DataTable`;
+`->defaultPerPage(25)` overrides it for a single table.
 
 Use `DataTable` for column-rich tables; use `QueryBuilderTable` for lean listings
 that want spatie's query power behind a small, reusable facade.
@@ -202,10 +209,22 @@ $table->setRelationColumn(
 );
 ```
 
+Ordering joins each relation of the path, so an orderable relation column takes
+`BelongsTo`, `HasOne` and `MorphOne` relations (keys and morph class from the
+relation). Any other relation (`HasMany`, `BelongsToMany`, `MorphTo`, a
+`…OfMany()`) would repeat rows, so `setRelationColumn()` throws
+`UnsupportedRelationException` for an orderable column on it. A searchable-only
+column takes any relation (it is a `whereHas`).
+
 ### Translatable columns
 
 Designed to plug into the common `translations` morphMany pattern
-(`translatable_id`, `translatable_type`, `locale`, `key`, `text`):
+(`translatable_id`, `translatable_type`, `locale`, `key`, `text`). The relation
+and the `key` / `locale` / `text` columns are configurable (`translatable_*`); the
+table, the model's key and the morph class (a morph map alias, too) come from
+the relation. The translations the columns show are loaded with the page (only
+their keys and locales), unless the query already loads the relation
+(`with('translations')`, `setRelation('translations')`):
 
 ```php
 use Givanov95\DataTable\Columns\TranslatableColumn;
@@ -234,6 +253,22 @@ $table->setPriceColumn('price');
 $table->setDateColumn('created_at', 'd.m.Y H:i:s');
 ```
 
+The search box takes a date column as `d.m.Y`, `d.m`, `H:i`, `H:i:s`,
+`d.m.Y H:i` or `d.m.Y H:i:s` (with the column's delimiters). The composable
+sends the browser's time zone with the search (`time_zone` key), and for a
+column whose format has a time (`H`), what the user types is read in that zone:
+
+- `d.m.Y` finds the rows of that day in the user's zone (a row at 23:30 UTC is
+  found by the next day's date in Sofia), `d.m.Y H:i` the rows of that minute.
+  These compare the stored value (`>=` / `<`), on every driver.
+- `H:i` / `H:i:s` are moved to the server's zone with today's offset.
+- `d.m` (no year) and the columns without a time in their format are compared
+  as typed, in the server's zone.
+
+The server's zone is `app.timezone`; the stored values are taken to be wall-clock
+times in it. A zone PHP does not know (a typo, or an old alias such as
+`Europe/Kiev` on some PHP builds) is ignored: the server's zone is used.
+
 #### Supported databases
 
 Date filtering formats the column in SQL, so it needs a driver-specific
@@ -244,6 +279,10 @@ expression. It is supported on:
 | MySQL / MariaDB      | `mysql`, `mariadb` | `DATE_FORMAT(column, …)`    |
 | PostgreSQL           | `pgsql`            | `TO_CHAR(column, …)`        |
 | SQLite               | `sqlite`           | `strftime(…, column)`       |
+
+An `exactMatch` column that is numeric by its cast (`int`, `integer`, `decimal:2`,
+`float`…, or an integer primary key) is skipped by the global search when the
+term is not a number it can hold, so `id = 'abc'` never reaches PostgreSQL.
 
 On any other driver (e.g. SQL Server) filtering a date column throws
 `Givanov95\DataTable\Exceptions\UnsupportedDriverException`. The other filters
@@ -266,6 +305,47 @@ $table->process(null, function ($query) {
 // Or for free-form mutations:
 $table->advancedSearch(fn ($q) => $q->whereJsonContains('tags', 'featured'));
 ```
+
+### Archive and restore
+
+The archive (soft-deleted rows) is off unless the table turns it on. Without
+`allowTrashed()`, `filter[trashed]=true` is ignored and the live rows are listed.
+
+```php
+$table->allowTrashed();                          // anyone who sees the list
+$table->allowTrashed(ability: 'viewArchive');    // Gate::allows('viewArchive', Post::class)
+```
+
+With an ability, users the gate refuses get the live rows (the parameter is
+ignored, not a 403). A model without `SoftDeletes` never shows an archive, so
+calling `allowTrashed()` on it is harmless. `toArray()['state']['trashed']` (and
+`$table->trashed` in the default serialization) is what was applied.
+
+Restoring is a POST route of the app, never a query parameter of the list (a
+GET that changes data can be triggered from another site). Build the table the
+same way as for the list and call `restore()`:
+
+```php
+// routes/web.php
+Route::post('posts/{id}/restore', [PostController::class, 'restore'])->name('posts.restore');
+
+// PostController
+public function restore(int $id)
+{
+    return $this->posts->table()->restore($id, fn ($q) => $q->where('team_id', auth()->user()->team_id));
+}
+```
+
+`restore($id, $scope)` looks the record up through the table's query and
+`$scope` (pass the same narrowing as the callback of `process()`), among the
+archived rows only, so a record the table does not list is a 404. It then
+checks the `restore` policy (`authorize('restore', $record)`), restores the
+record and redirects back with a `success` flash message. It is a 404 when the
+table has no `allowTrashed()` or the model has no `SoftDeletes`, and a 403 when
+the ability of `allowTrashed()` refuses.
+
+On the frontend, pass the route to the composable (`restoreUrl`) or to the
+`DataTable` component (`restore-url`); see below.
 
 ---
 
@@ -301,7 +381,8 @@ defineProps<{
 | `dataTable`          | `DataTableType<T>`            | The payload returned by `(new DataTable(...))->process()` |
 | `propName`           | `string` (default `dataTable`) | Inertia prop key for partial reloads                  |
 | `globalSearch`       | `boolean`                     | Show the global search input                          |
-| `showTrashed`        | `boolean`                     | Show the "trashed" toggle                             |
+| `showTrashed`        | `boolean`                     | Show the "trashed" toggle (needs `allowTrashed()`)    |
+| `restoreUrl`         | `string`                      | POST URL (use `?id`) of the restore button on archived rows; no button without it |
 | `advancedFilters`    | `boolean`                     | Reserve space for the advanced-filters slot           |
 | `selectedRowIndexes` | `(string \| number)[]`        | Highlight matching rows                               |
 | `selectedRowColumn`  | `string`                      | Column to match against `selectedRowIndexes`          |
@@ -346,8 +427,8 @@ shadcn-vue components in the app: `button`, `input`, `label`, `select`,
 **Update** both together, so the UI and the composable stay on one version:
 
 ```bash
-composer update givanov95/laravel-data-table
-npm install @givanov95/vue-data-table@^3.4
+composer require givanov95/laravel-data-table:^4.0
+npm install @givanov95/vue-data-table@^4.0
 php artisan vendor:publish --tag=data-table-shadcn --force
 ```
 
@@ -418,8 +499,10 @@ const columns: DataTableColumnDef<Row>[] = [
 
 `useLaravelDataTable(payload, options)` options: `propName` (default
 `dataTable`), `alsoReload` (other props to refresh with the table, e.g. the
-page's own filters), `searchDebounceMs` (1200) and `perPageOptions`
-(`[10, 20, 50, 100]`; the applied size is always offered). The table follows
+page's own filters), `searchDebounceMs` (1200), `perPageOptions`
+(`[10, 20, 50, 100]`; the applied size is always offered) and `restoreUrl`
+(`'/posts/?id/restore'` or `(id) => route('posts.restore', id)`): `onRestore(id)`
+POSTs there and does nothing without it. The table follows
 the server's applied state (`state.sort`, `state.search`, `state.trashed`), so
 back/forward and shared links stay right; a new sort, page size, search or
 archive goes back to page 1. `clearSearch(data)` empties the search box and
@@ -460,6 +543,8 @@ anything that can grow: `DataTable` loads every row.
 - `setOrdering(Ordering $ordering): self`
 - `setRawOrdering(?RawOrdering $rawOrdering): self`
 - `process(?DataTableParams $params = null, ?callable $callbackBeforePaginate = null): self`
+- `allowTrashed(bool $allow = true, ?string $ability = null): self`
+- `restore(int|string $id, ?callable $scope = null): RedirectResponse`
 - `advancedSearch(callable $callback): self`
 - `getData(): Collection`
 - `getPaginator(): Paginator`

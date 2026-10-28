@@ -6,32 +6,27 @@ namespace Givanov95\DataTable\Tests;
 
 use Givanov95\DataTable\DataTableParams;
 use Illuminate\Http\Request;
-use PHPUnit\Framework\Attributes\DataProvider;
 
 final class DataTableParamsTest extends TestCase
 {
-    /**
-     * @return array<string, array{mixed, int|null}>
-     */
-    public static function restoreIdProvider(): array
+    public function testRestoreIdIsNoLongerAParam(): void
     {
-        return [
-            'a plain id'               => ['7', 7],
-            'no id'                    => [null, null],
-            'text'                     => ['abc', null],
-            'an id with trailing text' => ['12abc', null],
-            // (int) ['x'] is 1, which would restore the row with id 1.
-            'an array'       => [['x'], null],
-            'an empty array' => [[], null],
-        ];
+        $this->assertFalse(property_exists(DataTableParams::class, 'restoreId'));
     }
 
-    #[DataProvider('restoreIdProvider')]
-    public function testRestoreIdIsOnlyTakenFromAWholeNumber(mixed $requested, ?int $expected): void
+    public function testTheTimeZoneIsOneKnownToPhpOrNothing(): void
     {
-        $request = Request::create('/', 'GET', $requested === null ? [] : ['restore_id' => $requested]);
+        $zone = fn (mixed $value) => DataTableParams::fromRequest(
+            Request::create('/', 'GET', ['filter' => ['timeZone' => $value]]),
+        )->timeZone;
 
-        $this->assertSame($expected, DataTableParams::fromRequest($request)->restoreId);
+        $this->assertSame('Europe/Sofia', $zone('Europe/Sofia'));
+        $this->assertSame('Etc/UTC', $zone('Etc/UTC'));
+        $this->assertSame('+02:00', $zone('+02:00'));
+        $this->assertNull($zone('xx'));
+        $this->assertNull($zone(''));
+        $this->assertNull($zone(['Europe/Sofia']));
+        $this->assertNull(DataTableParams::fromRequest(Request::create('/'))->timeZone);
     }
 
     public function testAnArrayAsTheSearchOrTheTrashedToggleIsTreatedAsMissing(): void

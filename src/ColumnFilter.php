@@ -10,6 +10,7 @@ use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
 use Givanov95\DataTable\Support\DateSqlExpression;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 
 final class ColumnFilter
 {
@@ -44,7 +45,7 @@ final class ColumnFilter
         } elseif ($enumColumns->has($columnKey)) {
             $this->applyEnumFilter($builder, $column, $columnKey, $filterValue, $useOrWhere, $table);
         } elseif ($priceColumns->has($columnKey)) {
-            $this->applyPriceFilter($builder, $columnKey, $filterValue, $exact, $useOrWhere);
+            $this->applyPriceFilter($builder, $columnKey, $filterValue, $exact, $useOrWhere, $table);
         } else {
             $this->applyDefaultFilter($builder, $column, $columnKey, $filterValue, $exact, $useOrWhere, $table);
         }
@@ -69,10 +70,18 @@ final class ColumnFilter
         string $table,
     ): void {
         $dateColumn = $this->dataTable->getDateColumns()->get($columnKey);
-        $clientTZ = new DateTimeZone($timeZone ?: date_default_timezone_get());
         $serverTZ = new DateTimeZone(date_default_timezone_get());
+        $clientTZ = DateTimeHelper::zone($timeZone) ?? $serverTZ;
 
         $helper = new DateTimeHelper($dateColumn, $clientTZ, $serverTZ, (string) $filterValue);
+        $range = $helper->range();
+
+        if ($range !== null) {
+            $this->whereInRange($builder, $column, $columnKey, $range, $useOrWhere, $table);
+
+            return;
+        }
+
         $convertedDate = $helper->convert()->convertedDate;
 
         if (! $convertedDate) {
@@ -101,6 +110,37 @@ final class ColumnFilter
         $builder->{$method}(function ($query) use ($table, $columnKey, $helper, $operator, $value) {
             $this->whereDateFormatted($query, "{$table}.{$columnKey}", $helper->format, $operator, $value);
         });
+    }
+
+    /**
+     * `from <= column < to` on the stored value: the same on every driver, and
+     * it can use an index.
+     *
+     * @param array{0: string, 1: string} $range
+     */
+    private function whereInRange(
+        Builder $builder,
+        $column,
+        string $columnKey,
+        array $range,
+        bool $useOrWhere,
+        string $table,
+    ): void {
+        $between = static function (Builder $query, string $qualified) use ($range): void {
+            $query->where($qualified, '>=', $range[0])->where($qualified, '<', $range[1]);
+        };
+
+        if ($column instanceof RelationColumn) {
+            $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
+            $builder->{$method}($column->relationString, function ($query) use ($column, $between) {
+                $between($query, $query->getModel()->getTable().'.'.$column->relationColumn);
+            });
+
+            return;
+        }
+
+        $method = $useOrWhere ? 'orWhere' : 'where';
+        $builder->{$method}(fn ($query) => $between($query, "{$table}.{$columnKey}"));
     }
 
     private function whereDateFormatted(
@@ -151,6 +191,7 @@ final class ColumnFilter
         mixed $filterValue,
         bool $exact,
         bool $useOrWhere,
+        string $table,
     ): void {
         // Digits only, taken from the raw input: a `%` or `_` typed by the user must not reach the pattern.
         $price = preg_replace('/\D/', '', (string) $filterValue);
@@ -159,8 +200,17 @@ final class ColumnFilter
             return;
         }
 
-        $method = $useOrWhere ? 'orWhere' : 'where';
-        $builder->{$method}($columnKey, $exact ? '=' : 'LIKE', $exact ? $price : "%{$price}%");
+        // Qualified: a join of a relation ordering can bring a column of the same name.
+        $column = "{$table}.{$columnKey}";
+        $boolean = $useOrWhere ? 'or' : 'and';
+
+        if ($exact) {
+            $builder->where($column, '=', $price, $boolean);
+
+            return;
+        }
+
+        LikeExpression::apply($builder, $column, $price, $boolean);
     }
 
     private function applyDefaultFilter(
@@ -175,13 +225,62 @@ final class ColumnFilter
         if ($column instanceof RelationColumn) {
             $method = $useOrWhere ? 'orWhereHas' : 'whereHas';
             $builder->{$method}($column->relationString, function ($query) use ($column, $filterValue, $exact) {
+                if ($exact && ! self::fitsColumn($query->getModel(), $column->relationColumn, $filterValue)) {
+                    $query->whereRaw('1 = 0');
+
+                    return;
+                }
+
                 $this->whereColumnMatches($query, $column->relationColumn, $filterValue, $exact);
             });
 
             return;
         }
 
+        if ($exact && ! self::fitsColumn($builder->getModel(), $columnKey, $filterValue)) {
+            // `id = 'abc'` is an error on PostgreSQL (22P02), not "no match", so
+            // the column matches nothing without asking the database. Added with
+            // the same boolean, so a search whose every column is skipped is not
+            // an empty group (which Laravel drops: every row would match).
+            $builder->whereRaw('1 = 0', [], $useOrWhere ? 'or' : 'and');
+
+            return;
+        }
+
         $this->whereColumnMatches($builder, "{$table}.{$columnKey}", $filterValue, $exact, $useOrWhere ? 'or' : 'and');
+    }
+
+    /**
+     * Whether a value can be compared with `=` to a column that is numeric by
+     * its cast (or an integer key): a whole number for an integer, a number
+     * for a decimal. Other columns take any value.
+     *
+     * An integer has to fit 32 bits: the cast does not say whether the column
+     * is `integer` or `bigint`, and a larger value is an error (22003) on an
+     * `integer` column in PostgreSQL. A bigint value above that is not found
+     * by an exact match.
+     *
+     * @internal
+     */
+    public static function fitsColumn(Model $model, string $column, mixed $value): bool
+    {
+        $cast = $model->getCasts()[$column] ?? null;
+
+        if ($cast === null && $column === $model->getKeyName() && in_array($model->getKeyType(), ['int', 'integer'], true)) {
+            $cast = 'int';
+        }
+
+        $cast = is_string($cast) ? strtolower(explode(':', $cast)[0]) : null;
+
+        return match ($cast) {
+            'int', 'integer' => filter_var(
+                $value,
+                FILTER_VALIDATE_INT,
+                ['options' => ['min_range' => -2147483648, 'max_range' => 2147483647]],
+            ) !== false,
+            'float', 'double', 'real', 'decimal' => is_numeric($value) && is_finite((float) $value),
+            default => true,
+        };
     }
 
     private function whereColumnMatches(

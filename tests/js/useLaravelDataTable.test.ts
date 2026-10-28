@@ -6,8 +6,9 @@ import { resetConfig, setConfig } from "../../resources/js/config";
 import { useLaravelDataTable } from "../../resources/js/tanstack";
 import type { LaravelDataTablePayload, UseLaravelDataTableOptions } from "../../resources/js/tanstack";
 
-const { get, replace, page } = vi.hoisted(() => ({
+const { get, post, replace, page } = vi.hoisted(() => ({
     get: vi.fn(),
+    post: vi.fn(),
     replace: vi.fn(),
     page: { url: "/posts" } as { url: string },
 }));
@@ -17,7 +18,7 @@ vi.mock("@inertiajs/vue3", async () => {
     const reactivePage = reactive(page);
 
     return {
-        router: { get, replace },
+        router: { get, post, replace },
         usePage: () => reactivePage,
     };
 });
@@ -66,6 +67,7 @@ describe("useLaravelDataTable", () => {
     beforeEach(() => {
         vi.useFakeTimers();
         get.mockReset();
+        post.mockReset();
         replace.mockReset();
         resetConfig();
         page.url = "/posts";
@@ -199,7 +201,7 @@ describe("useLaravelDataTable", () => {
 
     it("sends the request keys the server names in params", () => {
         page.url = "/posts?per_page=50";
-        const params = { per_page: "per_page", global_filter: "q.term", trashed: "archived", ordering: "sort", restore_id: "restore" };
+        const params = { per_page: "per_page", global_filter: "q.term", trashed: "archived", ordering: "sort" };
         const { table } = setup(payload({ params }));
 
         expect(table.perPage).toBe(50);
@@ -209,6 +211,59 @@ describe("useLaravelDataTable", () => {
 
         table.onTrashedChange(true);
         expect(lastQuery()).toMatchObject({ archived: "true" });
+    });
+
+    it("sends the time zone under the key the server names", async () => {
+        const params = { per_page: "perPage", global_filter: "q", trashed: "archived", ordering: "sort", time_zone: "tz" };
+        const { table } = setup(payload({ params }), { searchDebounceMs: 300 });
+
+        table.onGlobalFilterChange("28.10.2026");
+        await nextTick();
+        vi.advanceTimersByTime(300);
+
+        expect(lastQuery()).toMatchObject({ q: "28.10.2026", tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    });
+
+    it("puts the time zone next to the search key when the server does not name it", async () => {
+        const params = { per_page: "perPage", global_filter: "search.term", trashed: "archived", ordering: "sort" };
+        const { table } = setup(payload({ params }), { searchDebounceMs: 300 });
+
+        table.onGlobalFilterChange("al");
+        await nextTick();
+        vi.advanceTimersByTime(300);
+
+        expect(Object.keys(lastQuery())).toEqual(expect.arrayContaining(["search[term]", "search[timeZone]"]));
+    });
+
+    it("restores a row with a POST to restoreUrl", () => {
+        page.url = "/posts?filter%5Btrashed%5D=true&page=2";
+        const { table } = setup(payload(), { restoreUrl: "/posts/?id/restore" });
+
+        table.onRestore(7);
+
+        expect(get).not.toHaveBeenCalled();
+        expect(post).toHaveBeenCalledWith("/posts/7/restore", {}, { preserveState: true, preserveScroll: true });
+        expect(replace).not.toHaveBeenCalled();
+    });
+
+    it("takes restoreUrl as a function of the id", () => {
+        const { table } = setup(payload(), { restoreUrl: (id) => `/admin/posts/${id}/restore` });
+
+        table.onRestore("a1");
+
+        expect(post.mock.calls.at(-1)?.[0]).toBe("/admin/posts/a1/restore");
+    });
+
+    it("does not restore without restoreUrl", () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { table } = setup();
+
+        table.onRestore(7);
+
+        expect(post).not.toHaveBeenCalled();
+        expect(get).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledOnce();
+        warn.mockRestore();
     });
 
     it("reloads the payload prop and the props the page asks for", () => {

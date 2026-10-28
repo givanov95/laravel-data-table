@@ -1,5 +1,93 @@
 # Changelog
 
+## v4.0.0
+
+### Breaking
+- **The archive is opt-in.** `DataTable` showed the soft-deleted rows to anyone who added
+  `?filter[trashed]=true` to a list. Now it needs `->allowTrashed()`; without it the parameter is
+  ignored and the live rows are listed. `allowTrashed(ability: 'viewArchive')` (on `DataTable` and
+  `QueryBuilderTable`) also asks the gate: `Gate::allows('viewArchive', Model::class)`; a refused user
+  gets the live rows. A model without `SoftDeletes` never shows an archive: no
+  `BadMethodCallException` (500) from `?filter[trashed]=true` any more, in either class.
+- **Restoring is a POST.** `?restore_id=N` restored a record in the middle of `process()`, so a link
+  or an `<img>` on another site could restore records as the signed-in user. `process()` no longer
+  restores anything. The app adds a POST route that calls `$table->restore($id, $scope)`: the record
+  is found among the archived rows of the table's query (and `$scope`), or it is a 404; the
+  `restore` policy is checked; the response redirects back with a `success` flash message.
+  `restore()` is a 404 without `allowTrashed()` or `SoftDeletes`, a 403 when its ability refuses.
+- Removed: the `restore_id` config key, `DataTableConfig::getRestoreIdKey()`,
+  `DataTableParams::$restoreId`, and `restore_id` from `toArray()['params']`.
+- `toArray()['state']['trashed']` is the archive as applied, not as requested.
+- An orderable `RelationColumn` whose path has a relation that cannot be joined without repeating
+  rows (`HasMany`, `BelongsToMany`, `MorphTo`, `…OfMany()`, or a method that is not a relation)
+  throws `UnsupportedRelationException` from `setRelationColumn()`. It used to fail (or repeat
+  rows) only when someone sorted by it. A searchable-only column takes any relation.
+- With `TranslatableColumn`s, each row carries only the translations the columns show (their keys
+  and locales), unless the query loads the relation itself; the per-row lazy load put every
+  translation of the row into the payload.
+- `QueryBuilderTable` takes its default page size from `data-table.default_per_page`, like
+  `DataTable`, instead of a hard-coded 15. `->defaultPerPage(n)` still overrides it per table.
+- Frontend: `useLaravelDataTable` takes `restoreUrl` (`'/posts/?id/restore'` or a function of the
+  id) and `onRestore(id)` POSTs there; without it, it does nothing. The `DataTable` component takes
+  `restore-url` and shows the restore button only with it. `restore_id` is gone from
+  `LaravelDataTableParams`.
+
+### Added
+- Config keys `translatable_relation` (`translations`), `translatable_locale_column` (`locale`) and
+  `translatable_text_column` (`text`), for the names that were hard-coded. `translatable_table` is
+  no longer read: the table comes from the relation (`DataTableConfig::getTranslatableTable()` is
+  deprecated).
+- **The search reads dates in the user's time zone.** The composable sent the browser's zone with
+  every search (`filter[timeZone]`), but the server never read it. It is now a request key
+  (`time_zone`, by default next to `global_filter`, also in `toArray()['params']`) and
+  `DataTableParams::$timeZone` (a zone PHP does not know is ignored). For a date column with a time:
+  `d.m.Y` finds the rows of that day in the user's zone and the new `d.m.Y H:i` / `d.m.Y H:i:s` the
+  rows of that minute / second, as a range on the stored value; `H:i` is moved to the server's zone.
+  A date alone is no longer moved with the current time of day, which could land on the day before
+  or after. `QueryBuilderTable` accepts the configured zone key under Spatie's filter parameter.
+- The default serialization of `DataTable` (the bundled `DataTable` component's payload) carries
+  `requestKeys` and `trashed`. The component and its archive toggle read the `trashed` key from
+  there instead of a hard-coded `filter[trashed]`, and whether the rows are archived from the
+  server instead of the URL.
+
+### Fixed
+- A price column is searched as `table.column`: ordering by a relation that has a column of the
+  same name made the search fail with "ambiguous column" on every database.
+- An `exactMatch` column that is numeric by its cast (or an integer primary key) is left out of the
+  global search when the term is not a number it can hold (`abc`, `1.5` for an integer, an integer
+  past 32 bits, since the cast does not tell `integer` from `bigint`): PostgreSQL rejected
+  `id = 'abc'` (22P02) with a 500. Filtered on alone (`ColumnFilter`), such a value matches nothing.
+  `restore()` with an id that cannot be the model's integer key is a 404.
+
+- Ordering by a `TranslatableColumn` joined on `{table}.id` and the model's class name: a model
+  keyed on another column failed, and under a morph map the order was silently lost. The key,
+  table and morph class now come from the translations relation.
+- Ordering by a `RelationColumn` on a `HasOne` called `getOwnerKeyName()`, which only `BelongsTo`
+  has: a 500. `HasOne` is supported now, and `MorphOne` joins on the relation's local key.
+- The default ordering is by the model's key (`getKeyName()`), not `id`.
+- A `TranslatableColumn` shows the text of its own locale; with several locales loaded it showed
+  the first one found.
+- The translations of the `TranslatableColumn`s are loaded with the page (only their keys and
+  locales) instead of one query per row, which also failed under `Model::preventLazyLoading()`.
+  A load the query already has (`with('translations')`, `setRelation()`) is left as it is.
+
+### Migration from 3.x
+Update both packages together (`composer require givanov95/laravel-data-table:^4.0`,
+`npm install @givanov95/vue-data-table@^4.0`; the shadcn stubs did not change), then:
+
+1. Call `->allowTrashed()` (optionally with an ability) on every table that has an archive toggle.
+2. Add a POST route for restoring that returns `$table->restore($id, $scope)` — build the table
+   as for the list and pass the same narrowing as the callback of `process()` as `$scope`.
+3. Pass that route as `restoreUrl` to `useLaravelDataTable()` or as `restore-url` to the
+   `DataTable` component.
+4. Drop any code that reads `restore_id` (e.g. a controller that restored on `?restore_id=`) and
+   the workarounds that built `DataTableParams` by hand to keep `filter[trashed]` / `restore_id`
+   out.
+5. An orderable `RelationColumn` over a to-many relation now throws when declared: make it
+   searchable-only, or order by something else.
+6. A `QueryBuilderTable` without `->defaultPerPage()` now lists `default_per_page` rows (15 if the
+   app has no config of its own).
+
 ## v3.5.1
 
 ### Fixed

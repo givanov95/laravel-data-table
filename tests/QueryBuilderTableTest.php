@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -255,6 +256,47 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(2, $payload['meta']['total']);
     }
 
+    public function testTheTimeZoneKeyUnderTheFilterParameterIsAccepted(): void
+    {
+        Config::set('data-table.time_zone', 'filter.tz');
+
+        $payload = $this->table(Request::create('/', 'GET', ['filter' => ['global' => 'Apples', 'tz' => 'Europe/Sofia']]))->toArray();
+
+        $this->assertCount(1, $payload['data']);
+        $this->assertSame('filter.tz', $payload['params']['time_zone']);
+    }
+
+    public function testTrashedOnAModelWithoutSoftDeletesIsIgnored(): void
+    {
+        $payload = QueryBuilderTable::for(QbtPlainArticle::query(), Request::create('/', 'GET', ['filter' => ['trashed' => 'true']]))
+            ->columns([['key' => 'id', 'label' => '#', 'sortable' => true]])
+            ->allowTrashed()
+            ->toArray();
+
+        $this->assertSame(3, $payload['meta']['total']);
+        $this->assertFalse($payload['state']['trashed']);
+    }
+
+    public function testTrashedFollowsTheAbility(): void
+    {
+        QbtArticle::find(1)->delete();
+        $request = Request::create('/', 'GET', ['filter' => ['trashed' => 'true']]);
+        Gate::define('viewArchive', fn (?object $user, string $model): bool => false);
+
+        $payload = $this->table($request)->allowTrashed(ability: 'viewArchive')->toArray();
+
+        // Accepted (no 400) and ignored.
+        $this->assertSame(2, $payload['meta']['total']);
+        $this->assertFalse($payload['state']['trashed']);
+
+        Gate::define('viewArchive', fn (?object $user, string $model): bool => $model === QbtArticle::class);
+
+        $payload = $this->table($request)->allowTrashed(ability: 'viewArchive')->toArray();
+
+        $this->assertSame(3, $payload['meta']['total']);
+        $this->assertTrue($payload['state']['trashed']);
+    }
+
     public function testFilterKeysFollowSpatiesFilterParameterName(): void
     {
         Config::set('query-builder.parameters.filter', 'f');
@@ -365,6 +407,23 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(50, $payload['meta']['per_page']);
     }
 
+    public function testTheDefaultPageSizeComesFromTheConfig(): void
+    {
+        Config::set('data-table.default_per_page', 2);
+
+        $this->assertSame(2, $this->table(Request::create('/'))->toArray()['meta']['per_page']);
+
+        // A table's own default wins over the config.
+        $this->assertSame(1, $this->table(Request::create('/'))->defaultPerPage(1)->toArray()['meta']['per_page']);
+
+        // max_per_page bounds both.
+        Config::set('data-table.default_per_page', 20);
+        Config::set('data-table.max_per_page', 5);
+
+        $this->assertSame(5, $this->table(Request::create('/'))->toArray()['meta']['per_page']);
+        $this->assertSame(5, $this->table(Request::create('/'))->defaultPerPage(25)->toArray()['meta']['per_page']);
+    }
+
     public function testMaxPerPageRejectsNonPositiveValues(): void
     {
         $this->expectException(InvalidArgumentException::class);
@@ -377,6 +436,13 @@ class QbtArticle extends Model
 {
     use SoftDeletes;
 
+    protected $table = 'qbt_articles';
+
+    protected $guarded = [];
+}
+
+class QbtPlainArticle extends Model
+{
     protected $table = 'qbt_articles';
 
     protected $guarded = [];

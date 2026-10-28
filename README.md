@@ -427,8 +427,8 @@ shadcn-vue components in the app: `button`, `input`, `label`, `select`,
 **Update** both together, so the UI and the composable stay on one version:
 
 ```bash
-composer update givanov95/laravel-data-table
-npm install @givanov95/vue-data-table@^3.4
+composer require givanov95/laravel-data-table:^4.0
+npm install @givanov95/vue-data-table@^4.0
 php artisan vendor:publish --tag=data-table-shadcn --force
 ```
 

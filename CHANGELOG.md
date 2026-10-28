@@ -71,6 +71,9 @@
   A load the query already has (`with('translations')`, `setRelation()`) is left as it is.
 
 ### Migration from 3.x
+Update both packages together (`composer require givanov95/laravel-data-table:^4.0`,
+`npm install @givanov95/vue-data-table@^4.0`; the shadcn stubs did not change), then:
+
 1. Call `->allowTrashed()` (optionally with an ability) on every table that has an archive toggle.
 2. Add a POST route for restoring that returns `$table->restore($id, $scope)` — build the table
    as for the list and pass the same narrowing as the callback of `process()` as `$scope`.

@@ -53,7 +53,7 @@ describe("DataTable archive", () => {
 
         await wrapper.find("button[title='Restore']").trigger("click");
 
-        expect(post).toHaveBeenCalledWith("/posts/5/restore", {}, { preserveState: true, preserveScroll: true });
+        expect(post).toHaveBeenCalledWith("/posts/5/restore", {}, expect.objectContaining({ preserveState: true, preserveScroll: true }));
         expect(reload).not.toHaveBeenCalled();
     });
 
@@ -89,6 +89,19 @@ describe("DataTable archive", () => {
         const wrapper = mountTable(payload({ trashed: false, trashedAllowed: false }), { showTrashed: true, globalSearch: true });
 
         expect(wrapper.find("label[for='yes_filter[trashed]']").exists()).toBe(false);
+    });
+
+    it("sends one restore for a double click", async () => {
+        const wrapper = mountTable(payload({ trashed: true }), { restoreUrl: "/posts/?id/restore" });
+        const button = wrapper.find("button[title='Restore']");
+
+        await button.trigger("click");
+        await button.trigger("click");
+
+        expect(post).toHaveBeenCalledOnce();
+        post.mock.calls[0][2].onFinish();
+        await wrapper.vm.$nextTick();
+        expect((wrapper.find("button[title='Restore']").element as HTMLButtonElement).disabled).toBe(false);
     });
 
     it("has no restore button without restoreUrl", () => {

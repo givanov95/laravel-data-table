@@ -94,7 +94,7 @@ export interface UseLaravelDataTableOptions {
     /**
      * Where `onRestore(id)` POSTs: a URL with an `?id` placeholder
      * (`/posts/?id/restore`) or a function of the id. The route calls
-     * `DataTable::restore($id)`. Without it, `onRestore` does nothing.
+     * `DataTable::restore($id)`. Without it, `onRestore(id, visitOptions?)` does nothing.
      */
     restoreUrl?: string | ((id: number | string) => string);
 }
@@ -388,11 +388,6 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         visit({ [keys.value.trashed]: value ? "true" : undefined, page: 1 });
     }
 
-    /**
-     * Restore an archived row with a POST to `restoreUrl` (a GET that changes
-     * data could be triggered from another site). The route redirects back,
-     * so the table and the page's flash messages come back fresh.
-     */
     // The row being restored, while its POST runs: buttons can show it and a
     // second click (or a click on another row) waits, instead of a 404.
     const restoringId = ref<number | string | null>(null);
@@ -400,6 +395,12 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
     // An older server says nothing: the archive is up to the page then.
     const trashedAllowed = computed(() => payload.value.state?.trashed_allowed ?? true);
 
+    /**
+     * Restore an archived row with a POST to `restoreUrl` (a GET that changes
+     * data could be triggered from another site). The route redirects back,
+     * so the table and the page's flash messages come back fresh. The page's
+     * own visit options (`onSuccess`, `onError`, `onBefore`…) are passed on.
+     */
     function onRestore(id: number | string, visitOptions: Partial<VisitOptions> = {}): void {
         const restoreUrl = options.restoreUrl;
 
@@ -416,16 +417,35 @@ export function useLaravelDataTable<TData = Record<string, unknown>>(
         const url = typeof restoreUrl === "function" ? restoreUrl(id) : replacePlaceholder(restoreUrl, id);
         restoringId.value = id;
 
-        router.post(url, {}, {
-            preserveState: true,
-            preserveScroll: true,
-            ...visitOptions,
-            // Always released, whatever the visit's end (success, error, cancel).
-            onFinish: (visit) => {
-                restoringId.value = null;
-                visitOptions.onFinish?.(visit);
-            },
-        });
+        const release = (): void => {
+            restoringId.value = null;
+        };
+
+        try {
+            router.post(url, {}, {
+                preserveState: true,
+                preserveScroll: true,
+                ...visitOptions,
+                // A visit the page stops in onBefore never finishes: release it here.
+                onBefore: (visit) => {
+                    const go = visitOptions.onBefore?.(visit);
+
+                    if (go === false) {
+                        release();
+                    }
+
+                    return go;
+                },
+                // Always released, whatever the visit's end (success, error, cancel).
+                onFinish: (visit) => {
+                    release();
+                    visitOptions.onFinish?.(visit);
+                },
+            });
+        } catch (error) {
+            release();
+            throw error;
+        }
     }
 
     // ----- Column filters ----------------------------------------------------------

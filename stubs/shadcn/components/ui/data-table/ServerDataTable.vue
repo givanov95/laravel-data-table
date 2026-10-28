@@ -97,6 +97,8 @@ const props = withDefaults(defineProps<{
   showFilters?: boolean
 }>(), {
   showTrashed: false,
+  // A missing Boolean prop is false in Vue: an older payload (or no v-bind) keeps the toggle.
+  trashedAllowed: true,
   showFilters: true,
 })
 

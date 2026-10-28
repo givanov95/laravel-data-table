@@ -477,6 +477,27 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
     }
 
+    public function testARestoreAListenerCancelsIsNotASuccessAndUndoesBefore(): void
+    {
+        Post::find(2)->delete();
+        Gate::policy(Post::class, PostPolicy::class);
+        Post::restoring(fn () => false);
+
+        try {
+            (new DataTable(Post::query(), Request::create('/', 'POST')))
+                ->allowTrashed()
+                ->restore(2, before: fn () => Author::create(['name' => 'Side effect']));
+            $this->fail('A cancelled restore must not succeed.');
+        } catch (\Illuminate\Validation\ValidationException) {
+        } finally {
+            Post::flushEventListeners();
+        }
+
+        $this->assertNotNull(Post::withTrashed()->find(2)->deleted_at);
+        // What $before wrote is rolled back with it.
+        $this->assertSame(0, Author::where('name', 'Side effect')->count());
+    }
+
     public function testBeforeDoesNotRunWhenThePolicyRefuses(): void
     {
         Post::find(2)->delete();

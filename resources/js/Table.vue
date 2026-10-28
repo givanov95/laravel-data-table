@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { router } from "@inertiajs/vue3";
+import { ref } from "vue";
 
 import { r, t } from "./config";
 import GlobalSearch from "./components/GlobalSearch.vue";
@@ -114,12 +115,20 @@ const handleSort = async (isOrderable: boolean, key: string) => {
 
 // A POST: a GET that changes data could be triggered from another site. The
 // route redirects back, so the rows and the page's flash messages come back fresh.
+// The row being restored: a second click while its POST runs would 404.
+const restoringId = ref<number | string | null>(null);
+
 const handleRestoreRecord = (id: number | string) => {
-    if (!props.restoreUrl) return;
+    if (!props.restoreUrl || restoringId.value !== null) return;
+
+    restoringId.value = id;
 
     router.post(replacePlaceholder(props.restoreUrl, id), {}, {
         preserveState: true,
         preserveScroll: true,
+        onFinish: () => {
+            restoringId.value = null;
+        },
     });
 };
 </script>
@@ -251,6 +260,7 @@ const handleRestoreRecord = (id: number | string) => {
                                     v-if="restoreUrl"
                                     class="border border-[#E9E7E7] rounded-md p-1 active:scale-90 transition bg-blue-100 text-blue-500 duration-300 ease-in-out hover:bg-blue-200"
                                     :title="t('Restore')"
+                                    :disabled="restoringId !== null"
                                     @click="handleRestoreRecord(rowId(rowData))"
                                 >
                                     <IconRestore classes="w-4 h-4" />

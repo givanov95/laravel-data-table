@@ -407,6 +407,16 @@ describe("useLaravelDataTable", () => {
         expect(onFinish).toHaveBeenCalledOnce();
     });
 
+    it("releases the row when the page stops the visit in onBefore", () => {
+        const { table } = setup(payload(), { restoreUrl: "/posts/?id/restore" });
+
+        table.onRestore(7, { onBefore: () => false });
+        const result = post.mock.calls[0][2].onBefore({});
+
+        expect(result).toBe(false);
+        expect(table.restoringId).toBeNull();
+    });
+
     it("says whether the server allows the archive", async () => {
         const { table, data } = setup(payload());
 

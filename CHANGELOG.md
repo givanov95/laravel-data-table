@@ -16,6 +16,12 @@
   second click meanwhile does nothing) and `onRestore(id, visitOptions)` passing the page's
   `onSuccess` / `onError` / `onFinish`.
 
+- `$before` and the restore run in one transaction, and a restore a `restoring` listener cancels
+  is a validation error (`restore`), not a success.
+- The bundled `DataTable` component sends one restore for a double click.
+- Re-publish the shadcn stubs (`--tag=data-table-shadcn --force`) to hide the archive toggle for
+  users the server refuses.
+
 ### Deprecated
 - `SoftRestorer`: `restore()` and `restoreRecord()` no longer use it.
 

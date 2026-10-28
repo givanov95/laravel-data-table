@@ -30,6 +30,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
@@ -269,12 +270,20 @@ class DataTable
 
         Gate::authorize('restore', $record);
 
-        if ($before !== null) {
-            $before($record);
-        }
+        // One transaction: what $before writes is undone if the restore fails.
+        $record->getConnection()->transaction(function () use ($record, $before) {
+            if ($before !== null) {
+                $before($record);
+            }
 
-        /** @phpstan-ignore-next-line — restore() is provided by SoftDeletes. */
-        $record->restore();
+            /** @phpstan-ignore-next-line — restore() is provided by SoftDeletes. */
+            if ($record->restore() === false) {
+                // A `restoring` listener said no: not a success, and the record stays archived.
+                throw ValidationException::withMessages([
+                    'restore' => __('The record could not be restored.'),
+                ]);
+            }
+        });
 
         return $record;
     }

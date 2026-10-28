@@ -9,6 +9,8 @@ use Givanov95\DataTable\Columns\RelationColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
 use Givanov95\DataTable\Support\DateSqlExpression;
 use Givanov95\DataTable\Support\LikeExpression;
+use Givanov95\DataTable\Support\PostgresColumns;
+use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
@@ -242,14 +244,10 @@ final class ColumnFilter
     /**
      * `column = value`, without handing the database a value its column type
      * rejects: PostgreSQL fails the whole query (`id = 'abc'` is 22P02, a uuid,
-     * boolean or date column the same, a number past an `integer` 22003) where
-     * MySQL and SQLite just find nothing.
-     *
-     * - A column numeric by its cast (or an integer key) keeps the typed
-     *   comparison (an index can be used); a value it cannot hold matches
-     *   nothing, without asking the database.
-     * - Any other column on PostgreSQL is compared as text: its type is not
-     *   known here (a uuid key, a boolean or date cast, a number without a cast).
+     * boolean or date column the same, a number past an `integer` 22003)
+     * where MySQL and SQLite just find nothing. A value the column cannot
+     * hold matches nothing; anything else is the usual typed comparison, so
+     * results and indexes stay as they were.
      *
      * The false clause takes the same boolean, so a global search whose every
      * column is left out is not an empty group (which Laravel drops: every row
@@ -259,27 +257,48 @@ final class ColumnFilter
      */
     private function whereEquals(Builder $query, string $column, mixed $value, string $boolean = 'and'): void
     {
-        $model = $query->getModel();
         $name = (string) str($column)->afterLast('.');
-
-        if (self::numericCast($model, $name) !== null) {
-            self::fitsColumn($model, $name, $value)
-                ? $query->where($column, '=', $value, $boolean)
-                : $query->whereRaw('1 = 0', [], $boolean);
-
-            return;
-        }
-
         $connection = $query->getQuery()->getConnection();
 
-        if ($connection->getDriverName() === 'pgsql') {
-            $wrapped = $connection->getQueryGrammar()->wrap($column);
-            $query->whereRaw("CAST({$wrapped} AS TEXT) = ?", [(string) $value], $boolean);
+        match (self::acceptance($connection, $query->getModel(), $name, $value)) {
+            true => $query->where($column, '=', $value, $boolean),
+            false => $query->whereRaw('1 = 0', [], $boolean),
+            // A PostgreSQL type not known here (jsonb, inet, an array…): as text.
+            null => $query->whereRaw(
+                'CAST('.$connection->getQueryGrammar()->wrap($column).' AS TEXT) = ?',
+                [(string) $value],
+                $boolean,
+            ),
+        };
+    }
 
-            return;
+    /**
+     * Whether `column = value` can be sent: true, false (the column cannot
+     * hold the value), or null (PostgreSQL, a type not known here: compare as
+     * text). On PostgreSQL the column's real type decides (read from the
+     * schema); elsewhere, and when the schema cannot be read, its cast does
+     * (see fitsColumn()).
+     *
+     * @internal
+     */
+    public static function acceptance(Connection $connection, Model $model, string $column, mixed $value): ?bool
+    {
+        if (! is_scalar($value)) {
+            return false;
         }
 
-        $query->where($column, '=', $value, $boolean);
+        if ($connection->getDriverName() === 'pgsql') {
+            // Inside a self-referencing whereHas the table is an alias (laravel_reserved_0).
+            $table = $model->getTable();
+            $table = str_starts_with($table, 'laravel_reserved_') ? (new ($model::class))->getTable() : $table;
+            $type = PostgresColumns::types($connection, $table)[$column] ?? null;
+
+            if ($type !== null) {
+                return PostgresColumns::accepts($type, (string) $value);
+            }
+        }
+
+        return self::fitsColumn($model, $column, $value);
     }
 
     /**

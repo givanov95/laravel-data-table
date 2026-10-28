@@ -52,6 +52,8 @@ export interface LaravelDataTablePayload<TData = Record<string, unknown>> {
     state: LaravelDataTableState;
     /** Sent by v3.4+; the package defaults otherwise. */
     params?: LaravelDataTableParams;
+    /** The model's key, the field that identifies a row (v4.0.1+). */
+    key?: string;
 }
 
 /** A query value: nested objects become `key[sub]`; empty values remove the key. */

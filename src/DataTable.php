@@ -215,8 +215,8 @@ class DataTable
             });
         }
 
-        // `/posts/abc/restore` on an integer key is a 404, not a type error (22P02) from PostgreSQL.
-        if (! ColumnFilter::fitsColumn($model, $model->getKeyName(), $id)) {
+        // `/posts/abc/restore` on an integer or uuid key is a 404, not a type error (22P02) from PostgreSQL.
+        if (ColumnFilter::acceptance($builder->getQuery()->getConnection(), $model, $model->getKeyName(), $id) === false) {
             throw (new ModelNotFoundException())->setModel($model::class, [$id]);
         }
 
@@ -1002,6 +1002,7 @@ class DataTable
      *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
      *       'state'   => [ search, sort => [column, direction] | null, trashed ],
      *       'params'  => [ per_page, global_filter, trashed, ordering, time_zone ],   // request keys
+     *       'key'     => 'id',   // the model's key: the field that identifies a row
      *     ]
      *
      * Call it explicitly (`->process()->toArray()`); the default serialization
@@ -1045,6 +1046,7 @@ class DataTable
                 'trashed' => $this->trashed,
             ],
             'params' => $this->requestKeys,
+            'key' => $this->keyName,
         ];
     }
 

@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace Givanov95\DataTable\Tests;
 
-use Givanov95\DataTable\ColumnFilter;
 use Givanov95\DataTable\DataTable;
+use Givanov95\DataTable\Support\PostgresColumns;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -21,21 +25,6 @@ use PHPUnit\Framework\Attributes\DataProvider;
  */
 final class ExactMatchTest extends TestCase
 {
-    protected function defineEnvironment($app): void
-    {
-        parent::defineEnvironment($app);
-
-        // Only compiled against, never connected to.
-        $app['config']->set('database.connections.fake_pgsql', [
-            'driver'   => 'pgsql',
-            'host'     => 'db.invalid',
-            'database' => 'testing',
-            'username' => 'testing',
-            'password' => '',
-            'prefix'   => '',
-        ]);
-    }
-
     protected function setUp(): void
     {
         parent::setUp();
@@ -50,10 +39,17 @@ final class ExactMatchTest extends TestCase
             $table->integer('small')->default(0);
             $table->decimal('amount', 8, 2)->default(0);
             $table->string('code');
+            $table->decimal('total', 8, 2)->default(0);
+            $table->decimal('price_raw', 10, 2)->default(0);
+            $table->timestamp('at')->nullable();
+            $table->softDeletes();
         });
 
-        XmRecord::create(['uuid' => '0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6e', 'flag' => true, 'day' => '2026-10-28', 'owner_id' => 7, 'cents' => 1999, 'small' => 5, 'amount' => 19.99, 'code' => 'A-1']);
-        XmRecord::create(['uuid' => '0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6f', 'flag' => false, 'day' => '2026-10-29', 'owner_id' => 8, 'cents' => 2999, 'small' => 6, 'amount' => 29.99, 'code' => 'B-2']);
+        // Through the query builder: the stored form is what the test says, not a cast's.
+        DB::table('xm_records')->insert([
+            ['uuid' => '0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6e', 'flag' => true, 'day' => '2026-10-28', 'owner_id' => 7, 'cents' => 1999, 'small' => 5, 'amount' => 19.99, 'code' => 'A-1', 'total' => 19.99, 'price_raw' => 1999, 'at' => '2026-10-28 10:00:00'],
+            ['uuid' => '0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6f', 'flag' => false, 'day' => '2026-10-29', 'owner_id' => 8, 'cents' => 2999, 'small' => 6, 'amount' => 29.99, 'code' => 'B-2', 'total' => 29.99, 'price_raw' => 2999, 'at' => '2026-10-29 11:00:00'],
+        ]);
     }
 
     /** @return array<string, array{string}> */
@@ -67,6 +63,8 @@ final class ExactMatchTest extends TestCase
             'an integer without cast' => ['owner_id'],
             'an integer cast'         => ['small'],
             'a decimal cast'          => ['amount'],
+            'a decimal without cast'  => ['total'],
+            'a timestamp'             => ['at'],
         ];
     }
 
@@ -92,6 +90,27 @@ final class ExactMatchTest extends TestCase
         $this->assertSame([1], $this->search(XmRecord::query(), 'small', '5'));
         $this->assertSame([1], $this->search(XmRecord::query(), 'uuid', '0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6e'));
         $this->assertSame([2], $this->search(XmRecord::query(), 'code', 'B-2'));
+
+        // As the database compares them, not as text: '1' is true, 19.99 is 19.99.
+        $this->assertSame([1], $this->search(XmRecord::query(), 'flag', '1'));
+        $this->assertSame([1], $this->search(XmRecord::query(), 'total', '19.99'));
+
+        if (self::driver() !== 'sqlite') {
+            // SQLite compares the stored text.
+            $this->assertSame([1], $this->search(XmRecord::query(), 'at', '2026-10-28 10:00'));
+            $this->assertSame([2], $this->search(XmRecord::query(), 'day', '2026-10-29'));
+        }
+    }
+
+    public function testRestoreOfAnIdThatCannotBeTheKeyIsNotFound(): void
+    {
+        XmUuidRecord::query()->update(['deleted_at' => '2026-10-28 12:00:00']);
+        Gate::define('restore', fn (?object $user): bool => true);
+
+        $this->expectException(ModelNotFoundException::class);
+
+        // On PostgreSQL `uuid = 'abc'` would be a 22P02 (a 500), not a 404.
+        (new DataTable(XmUuidRecord::query(), Request::create('/', 'POST')))->allowTrashed()->restore('abc');
     }
 
     public function testAUuidKeyIsNotAnError(): void
@@ -102,7 +121,7 @@ final class ExactMatchTest extends TestCase
     public function testAnExactPriceWithALongNumberIsNotAnError(): void
     {
         // A phone number typed in the search box: 18 digits.
-        foreach (['cents', 'amount'] as $column) {
+        foreach (['cents', 'amount', 'price_raw'] as $column) {
             $table = (new DataTable(XmRecord::query(), Request::create('/', 'GET', ['filter' => ['global' => '+359 888 123 456 789 012']])))
                 ->setColumn($column, 'Price', searchable: true, exactMatch: true)
                 ->setPriceColumn($column)
@@ -111,32 +130,49 @@ final class ExactMatchTest extends TestCase
             $this->assertSame([], $table->getData()->all(), $column);
         }
 
-        $table = (new DataTable(XmRecord::query(), Request::create('/', 'GET', ['filter' => ['global' => '1999']])))
-            ->setColumn('cents', 'Price', searchable: true, exactMatch: true)
-            ->setPriceColumn('cents')
-            ->process();
+        foreach (['cents', 'price_raw'] as $column) {
+            $table = (new DataTable(XmRecord::query(), Request::create('/', 'GET', ['filter' => ['global' => '1999']])))
+                ->setColumn($column, 'Price', searchable: true, exactMatch: true)
+                ->setPriceColumn($column)
+                ->process();
 
-        $this->assertSame([1], $table->getData()->pluck('id')->all());
-    }
-
-    // -- Compiled for PostgreSQL ---------------------------------------------
-
-    public function testOnPostgresAColumnWithoutANumericCastIsComparedAsText(): void
-    {
-        foreach (['uuid', 'flag', 'day', 'owner_id', 'code'] as $column) {
-            $sql = $this->compiled($column, 'abc');
-
-            $this->assertStringContainsString("CAST(\"xm_records\".\"{$column}\" AS TEXT) = ?", $sql, $column);
+            // 1999.00 is 1999 for the database.
+            $this->assertSame([1], $table->getData()->pluck('id')->map(fn ($id) => (int) $id)->all(), $column);
         }
     }
 
-    public function testOnPostgresANumericCastKeepsTheTypedComparison(): void
+    /** @return array<string, array{string, string, bool|null}> */
+    public static function postgresLiterals(): array
     {
-        $this->assertStringContainsString('"xm_records"."small" = ?', $this->compiled('small', '5'));
-        $this->assertStringContainsString('"xm_records"."id" = ?', $this->compiled('id', '5'));
+        return [
+            'int4 in range'        => ['int4', '2147483647', true],
+            'int4 past 32 bits'    => ['int4', '2147483648', false],
+            'int2 past 16 bits'    => ['int2', '40000', false],
+            'int8 past 64 bits'    => ['int8', '9223372036854775808', false],
+            'int8 text'            => ['int8', 'abc', false],
+            'int4 decimal'         => ['int4', '1.5', false],
+            'numeric'              => ['numeric', '1.5', true],
+            'numeric long'         => ['numeric', '359888123456789012', true],
+            'numeric text'         => ['numeric', 'abc', false],
+            'bool one'             => ['bool', '1', true],
+            'bool word'            => ['bool', 'TRUE', true],
+            'bool text'            => ['bool', 'abc', false],
+            'uuid'                 => ['uuid', '0199f3b4-6c1e-7d2a-9b8e-1f2a3b4c5d6e', true],
+            'uuid text'            => ['uuid', 'abc', false],
+            'date'                 => ['date', '2026-10-28', true],
+            'date local form'      => ['date', '28.10.2026', false],
+            'date that is not one' => ['date', '2026-02-31', false],
+            'timestamp minute'     => ['timestamptz', '2026-10-28 10:00', true],
+            'time'                 => ['time', '10:00:30', true],
+            'varchar'              => ['varchar', 'anything', true],
+            'jsonb'                => ['jsonb', '{}', null],
+        ];
+    }
 
-        // A value it cannot hold never reaches the database.
-        $this->assertStringContainsString('1 = 0', $this->compiled('small', '3000000000'));
+    #[DataProvider('postgresLiterals')]
+    public function testKnowsWhichLiteralsPostgresTakes(string $type, string $value, ?bool $expected): void
+    {
+        $this->assertSame($expected, PostgresColumns::accepts($type, $value));
     }
 
     /** @return list<int> */
@@ -147,14 +183,6 @@ final class ExactMatchTest extends TestCase
             ->process();
 
         return $table->getData()->pluck('id')->map(fn ($id) => (int) $id)->all();
-    }
-
-    private function compiled(string $column, string $value): string
-    {
-        $table = (new DataTable(XmRecord::on('fake_pgsql'), Request::create('/')))
-            ->setColumn($column, 'Column', searchable: true, exactMatch: true);
-
-        return (new ColumnFilter($table))->apply(XmRecord::on('fake_pgsql'), $column, $value)->getBuilder()->toSql();
     }
 }
 
@@ -177,6 +205,7 @@ class XmRecord extends Model
 class XmUuidRecord extends Model
 {
     use HasUuids;
+    use SoftDeletes;
 
     protected $table = 'xm_records';
 

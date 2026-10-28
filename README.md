@@ -280,14 +280,17 @@ expression. It is supported on:
 | PostgreSQL           | `pgsql`            | `TO_CHAR(column, …)`        |
 | SQLite               | `sqlite`           | `strftime(…, column)`       |
 
-An `exactMatch` column never hands the database a value its type rejects
-(PostgreSQL fails the whole query on `id = 'abc'`). A column numeric by its cast
-(`int`, `integer`, `decimal:2`, `float`…, or an integer primary key) keeps the
-typed comparison and matches nothing for a term it cannot hold (for an integer:
-a whole number within 32 bits, since the cast does not tell `integer` from
-`bigint`). On PostgreSQL any other column (a uuid, a boolean or date cast, a
-number without a cast) is compared as text: `CAST(column AS TEXT) = ?`. The
-same goes for an exact price.
+An `exactMatch` column (and an exact price) never hands the database a value
+its type rejects: PostgreSQL fails the whole query on `id = 'abc'`, where MySQL
+and SQLite find nothing. A term the column cannot hold matches nothing; any
+other is the usual typed comparison, so results and indexes are unchanged.
+
+- On PostgreSQL the column's real type decides, read from the schema once per
+  table and process: integers by width, numbers, booleans (`t`, `1`, `yes`…),
+  uuids, and ISO dates and times (`2026-10-28`, `2026-10-28 10:00`). A type not
+  known here (`jsonb`, an array…) is compared as text.
+- Elsewhere a column numeric by its cast (`int`, `decimal:2`, `float`…, or an
+  integer key) takes only numbers (an integer within 32 bits).
 
 On any other driver (e.g. SQL Server) filtering a date column throws
 `Givanov95\DataTable\Exceptions\UnsupportedDriverException`. The other filters

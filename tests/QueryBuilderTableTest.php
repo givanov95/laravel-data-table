@@ -441,6 +441,77 @@ final class QueryBuilderTableTest extends TestCase
         $this->assertSame(['Second', 'First'], array_column($payload['data'], 'title'));
     }
 
+    private function filtered(array $filter): array
+    {
+        return QueryBuilderTable::for(QbtArticle::query(), Request::create('/', 'GET', ['filter' => $filter]))
+            ->columns([
+                ['key' => 'id', 'label' => '#', 'sortable' => true, 'filter' => 'exact'],
+                ['key' => 'title', 'label' => 'Title', 'filter' => 'text'],
+                ['key' => 'author', 'label' => 'Author', 'filter' => 'select', 'options' => ['Alice' => 'Alice A.', 'Bob' => 'Bob B.']],
+                ['key' => 'created_at', 'label' => 'Created', 'filter' => 'date'],
+            ])
+            ->defaultSort('id', 'asc')
+            ->transform(fn (QbtArticle $a): array => ['id' => $a->id])
+            ->toArray();
+    }
+
+    public function testColumnFiltersAndTogether(): void
+    {
+        $this->assertSame([1, 3], array_column($this->filtered(['title' => 'red'])['data'], 'id'));
+        $this->assertSame([1, 2], array_column($this->filtered(['author' => ['Alice', 'Bob']])['data'], 'id'));
+        $this->assertSame([1], array_column($this->filtered(['title' => 'red', 'author' => 'Alice'])['data'], 'id'));
+        $this->assertSame([2], array_column($this->filtered(['id' => ['2', 'abc']])['data'], 'id'));
+    }
+
+    public function testATextFilterWithACommaIsOneValue(): void
+    {
+        QbtArticle::create(['title' => 'Smith, John', 'author' => 'Dan']);
+
+        $this->assertSame([4], array_column($this->filtered(['title' => 'Smith, John'])['data'], 'id'));
+    }
+
+    public function testASelectComparesOnlyOfferedValues(): void
+    {
+        $payload = $this->filtered(['author' => ['Carol', 'Alice']]);
+
+        // Carol exists but is not offered.
+        $this->assertSame([1], array_column($payload['data'], 'id'));
+        $this->assertSame(['author' => ['Alice']], $payload['state']['filters']);
+    }
+
+    public function testADateFilterTakesCalendarDays(): void
+    {
+        QbtArticle::query()->whereKey(2)->update(['created_at' => '2026-10-28 12:00:00']);
+        QbtArticle::query()->whereKey([1, 3])->update(['created_at' => '2026-10-01 09:00:00']);
+
+        $payload = $this->filtered(['created_at' => ['from' => '2026-10-28', 'to' => '2026-10-28']]);
+
+        $this->assertSame([2], array_column($payload['data'], 'id'));
+        $this->assertSame(['created_at' => ['from' => '2026-10-28', 'to' => '2026-10-28']], $payload['state']['filters']);
+    }
+
+    public function testThePayloadDescribesTheFilters(): void
+    {
+        $columns = array_column($this->filtered([])['columns'], null, 'key');
+
+        $this->assertSame(['type' => 'text'], $columns['id']['filter']);
+        $this->assertSame(['type' => 'select', 'options' => [['value' => 'Alice', 'label' => 'Alice A.'], ['value' => 'Bob', 'label' => 'Bob B.']]], $columns['author']['filter']);
+        $this->assertSame(['type' => 'date'], $columns['created_at']['filter']);
+        $this->assertTrue($columns['title']['filterable']);
+    }
+
+    public function testAnUnknownFilterOrAReservedNameIsRejected(): void
+    {
+        try {
+            $this->table(Request::create('/'))->columns([['key' => 'title', 'filter' => 'fuzzy']]);
+            $this->fail('An unknown filter must be rejected.');
+        } catch (InvalidArgumentException) {
+        }
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->table(Request::create('/'))->columns([['key' => 'global', 'filter' => 'text']]);
+    }
+
     public function testMaxPerPageRejectsNonPositiveValues(): void
     {
         $this->expectException(InvalidArgumentException::class);

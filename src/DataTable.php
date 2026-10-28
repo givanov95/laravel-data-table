@@ -13,6 +13,7 @@ use Givanov95\DataTable\Columns\TranslatableColumn;
 use Givanov95\DataTable\Exceptions\InvalidColumnNameException;
 use Givanov95\DataTable\Exceptions\UnsupportedRelationException;
 use Givanov95\DataTable\Support\Archive;
+use Givanov95\DataTable\Support\FilterClauses;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,6 +30,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Gate;
+use InvalidArgumentException;
 
 /**
  * Server-side DataTable builder for Laravel. Wraps an Eloquent query, applies
@@ -86,6 +88,15 @@ class DataTable
 
     private DataTableParams $params;
 
+    /** @var array<string, array<array-key, mixed>|\Closure(): array<array-key, mixed>> */
+    private array $filterOptions = [];
+
+    /** @var array<string, list<array{value: string|int, label: string}>> */
+    private array $resolvedFilterOptions = [];
+
+    /** @var array<string, string|list<string>|array{from?: string, to?: string}> */
+    private array $appliedFilters = [];
+
     private bool $trashedAllowed = false;
 
     private ?string $trashedAbility = null;
@@ -131,6 +142,8 @@ class DataTable
         if ($params->globalFilter !== null && $params->globalFilter !== '') {
             $this->applyGlobalFilter($params->globalFilter);
         }
+
+        $this->applyColumnFilters($params);
 
         $this->applyCallbackBeforePaginate($callbackBeforePaginate);
 
@@ -324,6 +337,7 @@ class DataTable
         bool $searchable = false,
         bool $orderable = false,
         bool $exactMatch = false,
+        bool $filterable = false,
     ): self {
         $column = $keyOrColumn instanceof Column
             ? $keyOrColumn
@@ -333,6 +347,7 @@ class DataTable
                 searchable: $searchable,
                 orderable: $orderable,
                 exactMatch: $exactMatch,
+                filterable: $filterable,
             );
 
         // A RelationColumn passed here is checked as in setRelationColumn().
@@ -340,6 +355,7 @@ class DataTable
             $this->assertOrderableRelationPath($column);
         }
 
+        self::assertFilterKeyIsFree($column, $column->getDatabaseColumnName());
         $this->columns->put($column->getDatabaseColumnName(), $column);
 
         return $this;
@@ -356,6 +372,7 @@ class DataTable
             $this->assertOrderableRelationPath($relationColumn);
         }
 
+        self::assertFilterKeyIsFree($relationColumn, $relationColumn->getDatabaseColumnName());
         $this->columns->put($relationColumn->getDatabaseColumnName(), $relationColumn);
 
         return $this;
@@ -411,10 +428,45 @@ class DataTable
 
     public function setTranslatableColumn(TranslatableColumn $translatableColumn): self
     {
+        self::assertFilterKeyIsFree($translatableColumn, $translatableColumn->getTranslationKey());
+
         $this->translatableColumns->put($translatableColumn->getTranslationKey(), $translatableColumn);
         $this->columns->put($translatableColumn->getTranslationKey(), $translatableColumn);
 
         return $this;
+    }
+
+    /**
+     * The options of a filterable column's select (`filter[staff_id][]=3`):
+     * `[['value' => 3, 'label' => 'Ana'], …]`, a `value => label` map, or a
+     * closure returning either (called once, when the table is processed).
+     * Only these values are ever compared. An enum column offers its cases
+     * without this.
+     *
+     * @param array<array-key, mixed>|\Closure(): array<array-key, mixed> $options
+     */
+    public function setFilterOptions(string $columnKey, array|\Closure $options): self
+    {
+        $this->filterOptions[$columnKey] = $options;
+        unset($this->resolvedFilterOptions[$columnKey]);
+
+        return $this;
+    }
+
+    /**
+     * `filter[global]` is the search (with the default keys): a filterable
+     * column of that name would never be read.
+     */
+    private static function assertFilterKeyIsFree(Column $column, string $key): void
+    {
+        if ($column->isFilterable() && in_array($key, DataTableConfig::reservedFilterNames(), true)) {
+            throw new InvalidArgumentException(sprintf(
+                'The column "%s" cannot be filterable: %s[%s] is another request key of the table.',
+                $key,
+                DataTableConfig::getColumnFiltersKey(),
+                $key,
+            ));
+        }
     }
 
     /**
@@ -590,6 +642,151 @@ class DataTable
         $this->setBuilder($columnFilter->getBuilder());
 
         return $this;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Filters by column
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * The kind of filter a filterable column takes: a select (an enum, or a
+     * column with setFilterOptions()), a date range (a date column) or a text.
+     *
+     * @return 'select'|'date'|'text'
+     */
+    private function filterType(string $key): string
+    {
+        if ($this->enumColumns->has($key) || array_key_exists($key, $this->filterOptions)) {
+            return 'select';
+        }
+
+        return $this->dateColumns->has($key) ? 'date' : 'text';
+    }
+
+    /** @return list<array{value: string|int, label: string}> */
+    private function filterOptionsOf(string $key): array
+    {
+        if (! array_key_exists($key, $this->resolvedFilterOptions)) {
+            $this->resolvedFilterOptions[$key] = array_key_exists($key, $this->filterOptions)
+                ? FilterClauses::options($this->filterOptions[$key])
+                : FilterClauses::enumOptions($this->enumColumns->get($key)->getEnumClass());
+        }
+
+        return $this->resolvedFilterOptions[$key];
+    }
+
+    /**
+     * Each filter of a declared, filterable column, as its own `where`: the
+     * filters AND with each other and with the search. Keys that are not such
+     * a column are ignored.
+     */
+    private function applyColumnFilters(DataTableParams $params): void
+    {
+        $this->appliedFilters = [];
+
+        foreach ($this->columns as $key => $column) {
+            $key = (string) $key;
+
+            if (! $column->isFilterable() || ! array_key_exists($key, $params->columnFilters)) {
+                continue;
+            }
+
+            $value = $params->columnFilters[$key];
+
+            match ($this->filterType($key)) {
+                'select' => $this->applySelectFilter($key, $column, FilterClauses::values($value)),
+                'date' => $this->applyDateRangeFilter($key, $column, FilterClauses::dateRange($value), $params->timeZone),
+                'text' => is_string($value) ? $this->applyTextFilter($key, $column, $value, $params->timeZone) : null,
+            };
+        }
+    }
+
+    /** @param list<string> $requested */
+    private function applySelectFilter(string $key, Column $column, array $requested): void
+    {
+        if ($requested === []) {
+            return;
+        }
+
+        $values = FilterClauses::offered($requested, $this->filterOptionsOf($key));
+        $this->appliedFilters[$key] = array_map('strval', $values);
+
+        $this->getBuilder()->where(function (Builder $query) use ($column, $values) {
+            $this->whereColumn($query, $column, fn (Builder $q, string $qualified) => FilterClauses::whereIn($q, $qualified, $values));
+        });
+    }
+
+    /** @param array{from?: string, to?: string} $range */
+    private function applyDateRangeFilter(string $key, Column $column, array $range, ?string $timeZone): void
+    {
+        if ($range === []) {
+            return;
+        }
+
+        $this->appliedFilters[$key] = $range;
+        $withTime = str_contains($this->dateColumns->get($key)->getFormat(), 'H');
+        $zone = DateTimeHelper::zone($timeZone);
+
+        $this->getBuilder()->where(function (Builder $query) use ($column, $range, $withTime, $zone) {
+            $this->whereColumn(
+                $query,
+                $column,
+                fn (Builder $q, string $qualified) => FilterClauses::whereDateRange($q, $qualified, $range, $withTime, $zone),
+            );
+        });
+    }
+
+    private function applyTextFilter(string $key, Column $column, string $text, ?string $timeZone): void
+    {
+        if (trim($text) === '') {
+            return;
+        }
+
+        $this->appliedFilters[$key] = $text;
+
+        $this->getBuilder()->where(function (Builder $query) use ($key, $column, $text, $timeZone) {
+            if ($column instanceof TranslatableColumn) {
+                $this->whereColumn($query, $column, fn (Builder $q, string $qualified) => LikeExpression::apply($q, $qualified, $text));
+
+                return;
+            }
+
+            // The same typed comparison as the search (price, exact match, relation).
+            $this->columnFilter->apply($query, $key, $text, false, $timeZone);
+        });
+    }
+
+    /**
+     * Run `$clause($query, $qualifiedColumn)` on the column where it lives:
+     * the main table, a relation (`whereHas`) or a translation (`whereHas` on
+     * the translations, for the column's locale and key).
+     *
+     * @param \Closure(Builder, string): void $clause
+     */
+    private function whereColumn(Builder $query, Column $column, \Closure $clause): void
+    {
+        if ($column instanceof TranslatableColumn) {
+            $query->whereHas(DataTableConfig::getTranslatableRelation(), function (Builder $q) use ($column, $clause) {
+                $q->where(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocale())
+                    ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey());
+
+                $clause($q, $q->getModel()->getTable().'.'.DataTableConfig::getTranslatableTextColumn());
+            });
+
+            return;
+        }
+
+        if ($column instanceof RelationColumn) {
+            $query->whereHas($column->relationString, function (Builder $q) use ($column, $clause) {
+                $clause($q, $q->getModel()->getTable().'.'.$column->relationColumn);
+            });
+
+            return;
+        }
+
+        $clause($query, $query->getModel()->getTable().'.'.$column->getDatabaseColumnName());
     }
 
     private function applyCallbackBeforePaginate(?callable $callbackBeforePaginate): void
@@ -999,8 +1196,8 @@ class DataTable
      *     [
      *       'data'    => [ ...row... ],
      *       'meta'    => [ current_page, per_page, total, last_page, from, to ],
-     *       'columns' => [ [ key, label, sortable, searchable ], ... ],   // ordered
-     *       'state'   => [ search, sort => [column, direction] | null, trashed ],
+     *       'columns' => [ [ key, label, sortable, searchable, filterable, filter ], ... ],   // ordered
+     *       'state'   => [ search, sort => [column, direction] | null, trashed, filters ],
      *       'params'  => [ per_page, global_filter, trashed, ordering, time_zone ],   // request keys
      *     ]
      *
@@ -1036,6 +1233,8 @@ class DataTable
                     'label' => $column->getLabel(),
                     'sortable' => $column->isOrderable(),
                     'searchable' => $column->isSearchable(),
+                    'filterable' => $column->isFilterable(),
+                    'filter' => $column->isFilterable() ? $this->filterMeta($key) : null,
                 ])
                 ->values()
                 ->all(),
@@ -1043,9 +1242,25 @@ class DataTable
                 'search' => $this->params->globalFilter ?? '',
                 'sort' => $this->appliedSort(),
                 'trashed' => $this->trashed,
+                'filters' => $this->appliedFilters,
             ],
             'params' => $this->requestKeys,
         ];
+    }
+
+    /**
+     * What the frontend needs to draw a column's filter: its kind and, for a
+     * select, the options.
+     *
+     * @return array{type: string, options?: list<array{value: string|int, label: string}>}
+     */
+    private function filterMeta(string $key): array
+    {
+        $type = $this->filterType($key);
+
+        return $type === 'select'
+            ? ['type' => $type, 'options' => $this->filterOptionsOf($key)]
+            : ['type' => $type];
     }
 
     /**

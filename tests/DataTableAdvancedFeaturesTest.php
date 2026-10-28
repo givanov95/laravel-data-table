@@ -467,11 +467,12 @@ final class DataTableAdvancedFeaturesTest extends TestCase
         $params = (new DataTable(Post::query(), Request::create('/')))->setColumn('id', '#')->process()->toArray()['params'];
 
         $this->assertSame([
-            'per_page'      => 'per_page',
-            'global_filter' => 'filter.search',
-            'trashed'       => 'filter.trashed',
-            'ordering'      => 'ordering',
-            'time_zone'     => 'filter.timeZone',
+            'per_page'       => 'per_page',
+            'global_filter'  => 'filter.search',
+            'trashed'        => 'filter.trashed',
+            'ordering'       => 'ordering',
+            'time_zone'      => 'filter.timeZone',
+            'column_filters' => 'filter',
         ], $params);
     }
 

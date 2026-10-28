@@ -19,6 +19,7 @@ final class TranslatableColumn extends Column
         bool $searchable = false,
         bool $orderable = false,
         bool $exactMatch = false,
+        bool $filterable = false,
     ) {
         parent::__construct(
             databaseColumnName: DataTableConfig::getTranslatableColumnName(),
@@ -26,6 +27,7 @@ final class TranslatableColumn extends Column
             searchable: $searchable,
             orderable: $orderable,
             exactMatch: $exactMatch,
+            filterable: $filterable,
         );
 
         $this->translationKey = $translationKey;

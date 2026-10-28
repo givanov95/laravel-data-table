@@ -16,6 +16,8 @@ final class DataTableParams
         public int $perPage = 15,
         public ?string $trashed = null,
         public ?string $timeZone = null,
+        /** @var array<string, string|list<string>|array{from?: string, to?: string}> */
+        public array $columnFilters = [],
     ) {
     }
 
@@ -37,6 +39,7 @@ final class DataTableParams
             // The browser's zone, sent with the search: dates and times typed in
             // the search box are the user's. One PHP does not know is ignored.
             timeZone: DateTimeHelper::zone($request->input(DataTableConfig::getTimeZoneKey()))?->getName(),
+            columnFilters: Support\FilterClauses::normalize($request->input(DataTableConfig::getColumnFiltersKey())),
         );
     }
 

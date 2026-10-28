@@ -6,6 +6,7 @@ namespace Givanov95\DataTable;
 
 use Closure;
 use Givanov95\DataTable\Support\Archive;
+use Givanov95\DataTable\Support\FilterClauses;
 use Givanov95\DataTable\Support\LikeExpression;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -29,8 +30,11 @@ use Spatie\QueryBuilder\QueryBuilder;
  */
 class QueryBuilderTable
 {
-    /** @var list<array{key: string, label: string|null, sortable: bool, searchable: bool}> */
+    /** @var list<array{key: string, label: string|null, sortable: bool, searchable: bool, filterable: bool, filter: array{type: string, options?: list<array{value: string|int, label: string}>}|null}> */
     private array $columns = [];
+
+    /** @var array<string, 'text'|'exact'|'select'|'date'> the filter of each filterable column */
+    private array $filters = [];
 
     /** @var (Closure(TModel): array<string, mixed>)|null */
     private ?Closure $transform = null;
@@ -69,17 +73,50 @@ class QueryBuilderTable
     }
 
     /**
-     * @param  array<int, array{key: string, label?: string|null, sortable?: bool, searchable?: bool}>  $columns
+     * `filter` makes a column filterable on its own (`filter[status]=paid`):
+     * `'text'` (contains), `'exact'` (one or several values), `'select'` (one
+     * or several of `options`: `[['value' => …, 'label' => …]]`, a
+     * `value => label` map or a closure), or `'date'` (a `from` / `to` range of
+     * calendar days, in the server's zone).
+     *
+     * @param  array<int, array{key: string, label?: string|null, sortable?: bool, searchable?: bool, filter?: 'text'|'exact'|'select'|'date', options?: array<array-key, mixed>|Closure(): array<array-key, mixed>}>  $columns
      * @return $this
+     *
+     * @throws InvalidArgumentException for an unknown filter, or a filterable column named like another request key
      */
     public function columns(array $columns): self
     {
-        $this->columns = array_values(array_map(fn (array $column): array => [
-            'key' => $column['key'],
-            'label' => $column['label'] ?? null,
-            'sortable' => $column['sortable'] ?? false,
-            'searchable' => $column['searchable'] ?? false,
-        ], $columns));
+        $this->filters = [];
+
+        $this->columns = array_values(array_map(function (array $column): array {
+            $filter = $column['filter'] ?? null;
+
+            if ($filter !== null) {
+                if (! in_array($filter, ['text', 'exact', 'select', 'date'], true)) {
+                    throw new InvalidArgumentException("Unknown filter '{$filter}' for the column '{$column['key']}': use text, exact, select or date.");
+                }
+
+                if (in_array($column['key'], [...DataTableConfig::reservedFilterNames(), 'global', 'timeZone', 'trashed'], true)) {
+                    throw new InvalidArgumentException("The column '{$column['key']}' cannot be filterable: it is another request key of the table.");
+                }
+
+                $this->filters[$column['key']] = $filter;
+            }
+
+            return [
+                'key' => $column['key'],
+                'label' => $column['label'] ?? null,
+                'sortable' => $column['sortable'] ?? false,
+                'searchable' => $column['searchable'] ?? false,
+                'filterable' => $filter !== null,
+                'filter' => match ($filter) {
+                    null => null,
+                    'select' => ['type' => 'select', 'options' => FilterClauses::options($column['options'] ?? [])],
+                    'date' => ['type' => 'date'],
+                    default => ['type' => 'text'],
+                },
+            ];
+        }, $columns));
 
         return $this;
     }
@@ -150,7 +187,7 @@ class QueryBuilderTable
      *     data: list<array<string, mixed>>,
      *     meta: array{current_page: int, per_page: int, total: int, last_page: int, from: int|null, to: int|null},
      *     columns: list<array{key: string, label: string|null, sortable: bool, searchable: bool}>,
-     *     state: array{search: string|null, sort: array{column: string, direction: string}|null, trashed: bool},
+     *     state: array{search: string|null, sort: array{column: string, direction: string}|null, trashed: bool, filters: array<string, mixed>},
      * }
      */
     public function toArray(): array
@@ -174,6 +211,9 @@ class QueryBuilderTable
         if ($search !== null) {
             $this->applyGlobalSearch($eloquent, $search);
         }
+
+        // Here too, not by Spatie: it would split `Smith, John` into two values.
+        $filters = $this->applyColumnFilters($eloquent);
 
         $builder = QueryBuilder::for($eloquent, $this->request)
             ->allowedFilters(...$this->tolerableFilters());
@@ -212,9 +252,72 @@ class QueryBuilderTable
                     ? ['column' => $sortKey, 'direction' => $sortDirection]
                     : null,
                 'trashed' => $trashed,
+                'filters' => $filters,
             ],
             'params' => DataTableConfig::requestKeys(),
         ];
+    }
+
+    /**
+     * Each filter of a filterable column, as its own `where`; the applied
+     * values, as `state.filters`.
+     *
+     * @param  Builder<TModel>  $query
+     * @return array<string, string|list<string>|array{from?: string, to?: string}>
+     */
+    private function applyColumnFilters(Builder $query): array
+    {
+        $requested = FilterClauses::normalize($this->request->input(DataTableConfig::getColumnFiltersKey()));
+        $connection = $query->getQuery()->getConnection();
+        $model = $query->getModel();
+        $applied = [];
+
+        foreach ($this->columns as $column) {
+            $key = $column['key'];
+            $kind = $this->filters[$key] ?? null;
+
+            if ($kind === null || ! array_key_exists($key, $requested)) {
+                continue;
+            }
+
+            $value = $requested[$key];
+
+            if ($kind === 'text') {
+                if (is_string($value) && trim($value) !== '') {
+                    $applied[$key] = $value;
+                    LikeExpression::apply($query, $key, $value);
+                }
+
+                continue;
+            }
+
+            if ($kind === 'date') {
+                $range = FilterClauses::dateRange($value);
+
+                if ($range !== []) {
+                    $applied[$key] = $range;
+                    $query->where(fn (Builder $q) => FilterClauses::whereDateRange($q, $key, $range, false));
+                }
+
+                continue;
+            }
+
+            $values = FilterClauses::values($value);
+
+            if ($values === []) {
+                continue;
+            }
+
+            $values = $kind === 'select'
+                ? FilterClauses::offered($values, $column['filter']['options'] ?? [])
+                // Only values the column can hold reach the database (PostgreSQL rejects `id = 'abc'`).
+                : array_values(array_filter($values, fn (string $v): bool => ColumnFilter::acceptance($connection, $model, $key, $v) === true));
+
+            $applied[$key] = array_map('strval', $values);
+            FilterClauses::whereIn($query, $key, $values);
+        }
+
+        return $applied;
     }
 
     /**
@@ -310,6 +413,16 @@ class QueryBuilderTable
         if ($this->allowTrashed) {
             $names[] = 'trashed';
             $names[] = $this->spatieFilterName(DataTableConfig::getTrashedKey());
+        }
+
+        // The column filters, applied by applyColumnFilters(): each by its own
+        // name when they are Spatie's parameter, or their parameter under it.
+        $columnFilters = DataTableConfig::getColumnFiltersKey();
+
+        if ($columnFilters === (string) Config::get('query-builder.parameters.filter', 'filter')) {
+            array_push($names, ...array_map('strval', array_keys($this->filters)));
+        } else {
+            $names[] = $this->spatieFilterName($columnFilters);
         }
 
         return array_map(

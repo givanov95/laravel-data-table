@@ -389,12 +389,17 @@ class DataTable
             return;
         }
 
-        $keys = $this->translatableColumns->map(fn (TranslatableColumn $c) => $c->getTranslationKey())->unique()->values()->all();
-        $locales = $this->translatableColumns->flatMap(fn (TranslatableColumn $c) => $c->getLocales())->unique()->values()->all();
+        // Each column with its own languages: one column's fallbacks are not loaded for another key.
+        $columns = $this->translatableColumns->values();
 
-        $builder->with([$relation => function ($query) use ($keys, $locales) {
-            $query->whereIn(DataTableConfig::getTranslatableColumnName(), $keys)
-                ->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $locales);
+        $builder->with([$relation => function ($query) use ($columns) {
+            $query->where(function ($query) use ($columns) {
+                foreach ($columns as $column) {
+                    $query->orWhere(fn ($pair) => $pair
+                        ->where(DataTableConfig::getTranslatableColumnName(), $column->getTranslationKey())
+                        ->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocales()));
+                }
+            });
         }]);
     }
 

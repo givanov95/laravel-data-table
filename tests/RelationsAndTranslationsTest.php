@@ -255,6 +255,25 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertCount(2, $table->getData()->firstWhere('uid', 10)->translations);
     }
 
+    public function testLoadsEachColumnsOwnLanguagesOnly(): void
+    {
+        $shop = RlShop::find(10);
+        $shop->translations()->create(['locale' => 'bg', 'key' => 'subtitle', 'text' => 'Плод']);
+        $shop->translations()->create(['locale' => 'en', 'key' => 'subtitle', 'text' => 'Fruit']);
+
+        $table = (new DataTable(RlShop::query(), $this->request([])))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'title', 'Title', fallbackLocales: ['en']))
+            ->setTranslatableColumn(new TranslatableColumn('bg', 'subtitle', 'Subtitle'))
+            ->process();
+
+        $loaded = $table->getData()->firstWhere('uid', 10)->translations
+            ->map(fn ($t) => $t->getAttributes()['key'].':'.$t->getAttributes()['locale'])->sort()->values()->all();
+
+        // title in bg and en; subtitle only in bg, not the en that only title falls back to.
+        $this->assertSame(['subtitle:bg', 'title:bg', 'title:en'], $loaded);
+        $this->assertSame('Плод', $table->getData()->firstWhere('uid', 10)->subtitle);
+    }
+
     public function testSearchesEveryLanguageOfTheColumn(): void
     {
         $this->seedFallbackShops();

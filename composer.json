@@ -23,7 +23,11 @@
         "phpunit/phpunit": "^11.5|^12.0|^13.0",
         "friendsofphp/php-cs-fixer": "^3.0",
         "orchestra/testbench": "^10.0|^11.0",
-        "givanov95/laravel-git-hooks": "^1.1"
+        "givanov95/laravel-git-hooks": "^1.1",
+        "inertiajs/inertia-laravel": "^3.0"
+    },
+    "suggest": {
+        "inertiajs/inertia-laravel": "^3.0: Inertia apps get the restore message as Inertia flash data (page.flash.toast) as well"
     },
     "autoload": {
         "psr-4": {

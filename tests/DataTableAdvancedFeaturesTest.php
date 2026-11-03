@@ -351,6 +351,11 @@ final class DataTableAdvancedFeaturesTest extends TestCase
 
         $this->assertNull(Post::find(2)->deleted_at);
         $this->assertTrue($response->isRedirect());
+
+        // Apps without Inertia read the session, Inertia apps the toast in Inertia's flash data.
+        $message = __('The record has been successfully restored.');
+        $this->assertSame($message, session('success'));
+        $this->assertSame(['type' => 'success', 'message' => $message], session('inertia.flash_data.toast'));
     }
 
     public function testRestoreChecksTheRestorePolicy(): void

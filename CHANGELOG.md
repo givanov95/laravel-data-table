@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v4.3.0
+
+### Fixed
+- `DataTable::restore()` (and the deprecated `SoftRestorer`) now shows the toast in Inertia apps
+  without a bridge in the app: when `inertiajs/inertia-laravel` is installed, it also flashes
+  `Inertia::flash('toast', ['type' => 'success', 'message' => …])`, which `router.on('flash')`
+  receives. `session('success')` is still flashed for apps without Inertia (#56).
+
 ### Added
 - `TranslatableColumn` takes `fallbackLocales`: a row shows the first language with a text that is
   not empty, and search (global and by column) looks at every language of the column. A language

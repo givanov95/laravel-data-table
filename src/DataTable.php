@@ -15,6 +15,7 @@ use Givanov95\DataTable\Exceptions\UnsupportedRelationException;
 use Givanov95\DataTable\Support\Archive;
 use Givanov95\DataTable\Support\FilterClauses;
 use Givanov95\DataTable\Support\LikeExpression;
+use Givanov95\DataTable\Support\SuccessRedirect;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator as LengthAwarePaginatorContract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -239,7 +240,8 @@ class DataTable
 
     /**
      * Restore a soft-deleted record of this table, from the POST route of the
-     * app, and redirect back with a `success` flash message. See
+     * app, and redirect back with a `success` flash message (also as an Inertia `toast` when
+     * Inertia is installed, see SuccessRedirect). See
      * restoreRecord() for the checks, and for `$before`.
      *
      * @param ?callable(Builder):void $scope
@@ -249,7 +251,7 @@ class DataTable
     {
         $this->restoreRecord($id, $scope, $before);
 
-        return back()->with('success', __('The record has been successfully restored.'));
+        return SuccessRedirect::back(__('The record has been successfully restored.'));
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Givanov95\DataTable;
 
+use Givanov95\DataTable\Support\SuccessRedirect;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\RedirectResponse;
@@ -25,6 +26,6 @@ final class SoftRestorer
 
         $this->model->restore();
 
-        return back()->with('success', __('The record has been successfully restored.'));
+        return SuccessRedirect::back(__('The record has been successfully restored.'));
     }
 }

@@ -122,7 +122,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '26'
           cache: npm
 
       # npm ci инсталира точно версиите от package-lock.json (и пада, ако не съвпада с package.json)

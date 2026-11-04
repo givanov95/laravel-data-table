@@ -26,6 +26,7 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Relations\MorphOneOrMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\Query\Expression;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -180,7 +181,8 @@ class DataTable
                 $translations = new Collection($translations ? [$translations] : []);
             }
 
-            // One pass over the row's translations: [key][locale] => the first one stored.
+            // One pass over the row's translations: [key][locale] => the one with the lowest
+            // model key, as the ordering takes it, whatever order they were loaded in.
             // On the stored values: the translation model may cast its locale or key
             // (to an enum, a value object), which would never equal the column's text;
             // a language the column does not list is skipped, whatever the cast makes of it.
@@ -188,7 +190,13 @@ class DataTable
 
             foreach ($translations as $translation) {
                 $attributes = $translation->getAttributes();
-                $index[(string) ($attributes[$keyColumn] ?? '')][(string) ($attributes[$localeColumn] ?? '')] ??= $translation;
+                $current = &$index[(string) ($attributes[$keyColumn] ?? '')][(string) ($attributes[$localeColumn] ?? '')];
+
+                if ($current === null || $translation->getKey() < $current->getKey()) {
+                    $current = $translation;
+                }
+
+                unset($current);
             }
 
             foreach ($this->translatableColumns as $translatableColumn) {
@@ -402,11 +410,6 @@ class DataTable
                         ->whereIn(DataTableConfig::getTranslatableLocaleColumn(), $column->getLocales()));
                 }
             });
-
-            // By key, so that of duplicated translations the first stored is shown, as the ordering takes it.
-            if ($query->getModel()->getKeyName()) {
-                $query->orderBy($query->getModel()->getQualifiedKeyName());
-            }
         }]);
     }
 
@@ -949,7 +952,7 @@ class DataTable
         }
 
         if ($orderingColumn instanceof TranslatableColumn) {
-            $this->orderByTranslatable($builder, $orderingColumn, $mainTable, $ordering);
+            $this->orderByTranslatable($builder, $orderingColumn, $ordering);
             $this->setBuilder($builder);
 
             return $this;
@@ -1014,7 +1017,7 @@ class DataTable
         Ordering $ordering,
     ): void {
         if ($column instanceof TranslatableColumn) {
-            $this->orderByTranslatable($builder, $column, $mainTable, $ordering);
+            $this->orderByTranslatable($builder, $column, $ordering);
 
             return;
         }
@@ -1138,12 +1141,13 @@ class DataTable
     private function orderByTranslatable(
         Builder $builder,
         TranslatableColumn $column,
-        string $mainTable,
         Ordering $ordering,
     ): void {
         // Keys, table and morph class from the relation itself: the model's
         // key need not be `id`, and under a morph map the type is the alias.
-        $relation = $this->translationsRelation($builder->getModel());
+        // Without the blank model's key constraint; the relation's own (`->where(...)`)
+        // stay, as in whereHas() for the search.
+        $relation = Relation::noConstraints(fn () => $this->translationsRelation($builder->getModel()));
         $keyColumn = DataTableConfig::getTranslatableColumnName();
         $localeColumn = DataTableConfig::getTranslatableLocaleColumn();
         $textColumn = DataTableConfig::getTranslatableTextColumn();
@@ -1152,14 +1156,16 @@ class DataTable
         $texts = [];
         $bindings = [];
 
-        // One subquery per language, the first translation stored (by key): a duplicated
+        // One subquery per language, the translation with the lowest key: a duplicated
         // translation does not multiply the row, as a join would, and the page shows the
-        // same one (the load is ordered by key too). The count query keeps none of it.
+        // same one. The count query keeps none of it.
         foreach ($column->getLocales() as $locale) {
-            $text = $related->newQuery()
-                ->selectRaw("NULLIF(TRIM({$grammar->wrap($related->qualifyColumn($textColumn))}), '')")
-                ->whereColumn($related->qualifyColumn($relation->getForeignKeyName()), '=', "{$mainTable}.{$relation->getLocalKeyName()}")
-                ->where($related->qualifyColumn($relation->getMorphType()), '=', $relation->getMorphClass())
+            $text = $relation->getRelationExistenceQuery(
+                $related->newQueryWithoutRelationships(),
+                $builder,
+                new Expression("NULLIF(TRIM({$grammar->wrap($related->qualifyColumn($textColumn))}), '')"),
+            )
+                ->mergeConstraintsFrom($relation->getQuery())
                 ->where($related->qualifyColumn($localeColumn), '=', $locale)
                 ->where($related->qualifyColumn($keyColumn), '=', $column->getTranslationKey())
                 ->when($related->getKeyName(), fn ($query, $key) => $query->orderBy($related->qualifyColumn($key)))

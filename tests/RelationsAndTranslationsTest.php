@@ -368,6 +368,44 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame([19, 11, 18, 12, 10], $this->uids($process('desc')));
     }
 
+    public function testTheOrderingTakesTheRelationsOwnConstraintsAsTheShownTextDoes(): void
+    {
+        $kiwi = RlShop::create(['uid' => 18, 'name' => 'Shop 18']);
+        $kiwi->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Zzz draft']);
+        $kiwi->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Kiwi']);
+        Config::set('data-table.translatable_relation', 'publishedTranslations');
+
+        $table = (new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'title', 'direction' => 'asc']])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true))
+            ->process();
+
+        // The draft is not a translation of the relation: Kiwi is shown and ordered.
+        $this->assertSame('Kiwi', $this->titles($table)[18]);
+        $this->assertSame([10, 12, 18, 11], $this->uids($table));
+    }
+
+    public function testTheShownTranslationIsTheLowestKeyWhateverOrderItIsLoadedIn(): void
+    {
+        $kiwi = RlShop::create(['uid' => 18, 'name' => 'Shop 18']);
+        $kiwi->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Kiwi']);
+        $kiwi->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Aaa']);
+
+        $process = fn ($query) => (new DataTable($query, $this->request(['ordering' => ['key' => 'title', 'direction' => 'asc']])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true))
+            ->process();
+
+        // The app's own load, newest first.
+        $ownLoad = $process(RlShop::query()->with(['translations' => fn ($query) => $query->orderByDesc('id')]));
+        $this->assertSame('Kiwi', $this->titles($ownLoad)[18]);
+        $this->assertSame([10, 12, 18, 11], $this->uids($ownLoad));
+
+        // A relation ordered newest first.
+        Config::set('data-table.translatable_relation', 'newestTranslations');
+        $newest = $process(RlShop::query());
+        $this->assertSame('Kiwi', $this->titles($newest)[18]);
+        $this->assertSame([10, 12, 18, 11], $this->uids($newest));
+    }
+
     public function testFallbackLanguagesAreKeptOnceEach(): void
     {
         $column = new TranslatableColumn('bg', 'title', fallbackLocales: ['en', 'en', RlLocale::En, 'bg', 'de']);
@@ -511,6 +549,16 @@ class RlShop extends Model
     public function translations(): MorphMany
     {
         return $this->morphMany(RlTranslation::class, 'translatable');
+    }
+
+    public function publishedTranslations(): MorphMany
+    {
+        return $this->morphMany(RlTranslation::class, 'translatable')->where('text', '!=', 'Zzz draft');
+    }
+
+    public function newestTranslations(): MorphMany
+    {
+        return $this->morphMany(RlTranslation::class, 'translatable')->latest('id');
     }
 
     public function castTranslations(): MorphMany

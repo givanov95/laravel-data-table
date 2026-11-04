@@ -268,11 +268,11 @@ new TranslatableColumn(Locale::Bg, 'title', __('Title'), searchable: true, order
 - Search, global and by column, looks at the text in every language of the column,
   not only the shown one.
 - With more than one translation for a record, key and language (no unique index on
-  the table), the first stored one (lowest key) counts, for the shown text and the
-  ordering alike, and the row is still listed once.
+  the table), the one with the lowest key counts (the first stored, with an
+  auto-increment key), for the shown text and the ordering alike, and the row is still
+  listed once. Constraints on the relation (`->where(...)`) apply to both.
 - When the query loads the translations itself (`with('translations')`), that load must
-  include the fallback languages, or a row cannot show them, and be ordered by key for
-  duplicated translations to show the first stored one.
+  include the fallback languages, or a row cannot show them.
 - Ordering is by the shown text. Rows without one (or with an empty text) come last
   in both directions, the same on MySQL, PostgreSQL and SQLite; this holds for a
   column without fallbacks too.

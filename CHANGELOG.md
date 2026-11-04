@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v4.3.1
+
 ### Fixed
 - Ordering by a `TranslatableColumn` no longer lists a record several times (and counts it
   several times in the pagination) when it has more than one translation for the column's key
@@ -9,6 +11,12 @@
   instead of a join, and the page shows that same one, whatever order the translations were
   loaded in. The ordering now also takes the relation's own constraints (`->where(...)`), as
   the shown text and the search do (#54).
+
+### Changed
+- CI and the npm publish run `actions/checkout` and `actions/setup-node` v7 (Node 24); the publish
+  job no longer restores the npm cache (#59).
+- `@givanov95/vue-data-table` 4.3.0 was never published to npm (the publish run failed); 4.3.1
+  is the next npm release after 4.2.1, with the same frontend code.
 
 ## v4.3.0
 

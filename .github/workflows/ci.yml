@@ -21,7 +21,7 @@ jobs:
           - laravel: '13'
             testbench: '11.*'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -82,7 +82,7 @@ jobs:
       DT_DB_USERNAME: ${{ matrix.username }}
       DT_DB_PASSWORD: ${{ matrix.password }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -100,7 +100,7 @@ jobs:
     name: PHP CS Fixer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # php-cs-fixer се пуска на 8.3 (минималната поддържана версия)
       - uses: shivammathur/setup-php@v2
@@ -118,9 +118,9 @@ jobs:
     name: Frontend (typecheck + Vitest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '26'
           cache: npm

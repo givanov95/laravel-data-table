@@ -26,6 +26,7 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Relations\MorphOneOrMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\Query\Expression;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -180,7 +181,8 @@ class DataTable
                 $translations = new Collection($translations ? [$translations] : []);
             }
 
-            // One pass over the row's translations: [key][locale] => the first one stored.
+            // One pass over the row's translations: [key][locale] => the one with the lowest
+            // model key, as the ordering takes it, whatever order they were loaded in.
             // On the stored values: the translation model may cast its locale or key
             // (to an enum, a value object), which would never equal the column's text;
             // a language the column does not list is skipped, whatever the cast makes of it.
@@ -188,7 +190,13 @@ class DataTable
 
             foreach ($translations as $translation) {
                 $attributes = $translation->getAttributes();
-                $index[(string) ($attributes[$keyColumn] ?? '')][(string) ($attributes[$localeColumn] ?? '')] ??= $translation;
+                $current = &$index[(string) ($attributes[$keyColumn] ?? '')][(string) ($attributes[$localeColumn] ?? '')];
+
+                if ($current === null || $translation->getKey() < $current->getKey()) {
+                    $current = $translation;
+                }
+
+                unset($current);
             }
 
             foreach ($this->translatableColumns as $translatableColumn) {
@@ -944,7 +952,7 @@ class DataTable
         }
 
         if ($orderingColumn instanceof TranslatableColumn) {
-            $this->orderByTranslatable($builder, $orderingColumn, $mainTable, $ordering);
+            $this->orderByTranslatable($builder, $orderingColumn, $ordering);
             $this->setBuilder($builder);
 
             return $this;
@@ -1009,7 +1017,7 @@ class DataTable
         Ordering $ordering,
     ): void {
         if ($column instanceof TranslatableColumn) {
-            $this->orderByTranslatable($builder, $column, $mainTable, $ordering);
+            $this->orderByTranslatable($builder, $column, $ordering);
 
             return;
         }
@@ -1133,38 +1141,39 @@ class DataTable
     private function orderByTranslatable(
         Builder $builder,
         TranslatableColumn $column,
-        string $mainTable,
         Ordering $ordering,
     ): void {
         // Keys, table and morph class from the relation itself: the model's
         // key need not be `id`, and under a morph map the type is the alias.
-        $relation = $this->translationsRelation($builder->getModel());
+        // Without the blank model's key constraint; the relation's own (`->where(...)`)
+        // stay, as in whereHas() for the search.
+        $relation = Relation::noConstraints(fn () => $this->translationsRelation($builder->getModel()));
         $keyColumn = DataTableConfig::getTranslatableColumnName();
         $localeColumn = DataTableConfig::getTranslatableLocaleColumn();
         $textColumn = DataTableConfig::getTranslatableTextColumn();
+        $related = $relation->getRelated();
         $grammar = $builder->getQuery()->getGrammar();
         $texts = [];
+        $bindings = [];
 
-        // One join per language; a translation is one row per record, key and language.
-        foreach ($column->getLocales() as $index => $locale) {
-            $alias = $index === 0 ? 'dt_translations' : "dt_translations_{$index}";
+        // One subquery per language, the translation with the lowest key: a duplicated
+        // translation does not multiply the row, as a join would, and the page shows the
+        // same one. The count query keeps none of it.
+        foreach ($column->getLocales() as $locale) {
+            $text = $relation->getRelationExistenceQuery(
+                $related->newQueryWithoutRelationships(),
+                $builder,
+                new Expression("NULLIF(TRIM({$grammar->wrap($related->qualifyColumn($textColumn))}), '')"),
+            )
+                ->mergeConstraintsFrom($relation->getQuery())
+                ->where($related->qualifyColumn($localeColumn), '=', $locale)
+                ->where($related->qualifyColumn($keyColumn), '=', $column->getTranslationKey())
+                ->when($related->getKeyName(), fn ($query, $key) => $query->orderBy($related->qualifyColumn($key)))
+                ->limit(1)
+                ->toBase();
 
-            $builder->leftJoin("{$relation->getRelated()->getTable()} as {$alias}", function ($join) use (
-                $relation,
-                $alias,
-                $mainTable,
-                $column,
-                $locale,
-                $keyColumn,
-                $localeColumn,
-            ) {
-                $join->on("{$alias}.{$relation->getForeignKeyName()}", '=', "{$mainTable}.{$relation->getLocalKeyName()}")
-                    ->where("{$alias}.{$relation->getMorphType()}", '=', $relation->getMorphClass())
-                    ->where("{$alias}.{$localeColumn}", '=', $locale)
-                    ->where("{$alias}.{$keyColumn}", '=', $column->getTranslationKey());
-            });
-
-            $texts[] = "NULLIF(TRIM({$grammar->wrap("{$alias}.{$textColumn}")}), '')";
+            $texts[] = "({$text->toSql()})";
+            array_push($bindings, ...$text->getBindings());
         }
 
         $shown = count($texts) === 1 ? $texts[0] : 'COALESCE('.implode(', ', $texts).')';
@@ -1175,8 +1184,10 @@ class DataTable
             throw new \InvalidArgumentException('Order direction must be "asc" or "desc".');
         }
 
-        $builder->orderByRaw("CASE WHEN {$shown} IS NULL THEN 1 ELSE 0 END")
-            ->orderByRaw("{$shown} {$direction}");
+        // The text twice (no NULLS LAST on MySQL, no alias in an expression on PostgreSQL),
+        // so its bindings go twice too.
+        $builder->orderByRaw("CASE WHEN {$shown} IS NULL THEN 1 ELSE 0 END", $bindings)
+            ->orderByRaw("{$shown} {$direction}", $bindings);
     }
 
     private function translationsRelation(Model $model): MorphOneOrMany

@@ -1169,7 +1169,8 @@ class DataTable
                 ->where($related->qualifyColumn($localeColumn), '=', $locale)
                 ->where($related->qualifyColumn($keyColumn), '=', $column->getTranslationKey())
                 ->when($related->getKeyName(), fn ($query, $key) => $query->orderBy($related->qualifyColumn($key)))
-                ->limit(1);
+                ->limit(1)
+                ->toBase();
 
             $texts[] = "({$text->toSql()})";
             array_push($bindings, ...$text->getBindings());

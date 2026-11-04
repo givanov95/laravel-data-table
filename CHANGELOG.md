@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+- Ordering by a `TranslatableColumn` no longer lists a record several times (and counts it
+  several times in the pagination) when it has more than one translation for the column's key
+  and language: each language is a subquery that takes the first translation stored (lowest key)
+  instead of a join. The translations loaded with the page are ordered by key, so the shown
+  text is that same first one (#54).
+
 ## v4.3.0
 
 ### Fixed

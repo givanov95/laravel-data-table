@@ -338,6 +338,36 @@ final class RelationsAndTranslationsTest extends TestCase
         $this->assertSame(17, $this->uids($table)[0]);
     }
 
+    public function testDuplicatedTranslationsCountOnceAndTheFirstStoredIsShownAndOrdered(): void
+    {
+        // No unique index on the translations: two per language. The first stored counts.
+        $kiwi = RlShop::create(['uid' => 18, 'name' => 'Shop 18']);
+        $kiwi->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Kiwi']);
+        $kiwi->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Aaa']);
+        $kiwi->translations()->create(['locale' => 'bg', 'key' => 'title', 'text' => 'Киви']);
+        $kiwi->translations()->create(['locale' => 'bg', 'key' => 'title', 'text' => 'Ааа']);
+
+        // The first en is empty: bg is shown, not the second en.
+        $strawberry = RlShop::create(['uid' => 19, 'name' => 'Shop 19']);
+        $strawberry->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => '  ']);
+        $strawberry->translations()->create(['locale' => 'en', 'key' => 'title', 'text' => 'Aaa']);
+        $strawberry->translations()->create(['locale' => 'bg', 'key' => 'title', 'text' => 'Ягода']);
+        $strawberry->translations()->create(['locale' => 'bg', 'key' => 'title', 'text' => 'Ааа']);
+
+        $process = fn (string $direction) => (new DataTable(RlShop::query(), $this->request(['ordering' => ['key' => 'title', 'direction' => $direction]])))
+            ->setTranslatableColumn(new TranslatableColumn('en', 'title', 'Title', orderable: true, fallbackLocales: ['bg']))
+            ->process();
+
+        $asc = $process('asc');
+
+        // Apple 10, Banana 12, Kiwi 18, Pear 11, Ягода 19: each row once.
+        $this->assertSame([10, 12, 18, 11, 19], $this->uids($asc));
+        $this->assertSame(5, $asc->getPaginator()->total());
+        $this->assertSame('Kiwi', $this->titles($asc)[18]);
+        $this->assertSame('Ягода', $this->titles($asc)[19]);
+        $this->assertSame([19, 11, 18, 12, 10], $this->uids($process('desc')));
+    }
+
     public function testFallbackLanguagesAreKeptOnceEach(): void
     {
         $column = new TranslatableColumn('bg', 'title', fallbackLocales: ['en', 'en', RlLocale::En, 'bg', 'de']);

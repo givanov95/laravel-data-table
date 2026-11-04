@@ -21,9 +21,9 @@ jobs:
         with:
           node-version: '26'
           registry-url: https://registry.npmjs.org
-          cache: npm
+          # No dependency cache in the job that can publish: a restored cache could be poisoned.
 
-      # Trusted Publishing иска npm >= 11.5.1, а Node 22 идва с npm 10
+      # Trusted Publishing иска npm >= 11.5.1: стъпката го гарантира, каквато и npm да идва с Node
       - name: Update npm
         run: npm install -g "npm@^11.5.1"
 
